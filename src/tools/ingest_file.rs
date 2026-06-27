@@ -37,9 +37,11 @@ pub async fn ingest_file(
         return Err(anyhow::anyhow!("Fil hittades inte: {}", file_path));
     }
 
+    // Use absolute path as fallback to avoid collisions
     let doc_id = args.document_id.clone().unwrap_or_else(|| {
-        let basename = std::path::Path::new(file_path).file_name().unwrap_or_default().to_string_lossy().to_lowercase();
-        basename
+        let abs_path = std::path::absolute(file_path)
+            .unwrap_or_else(|_| std::path::Path::new(file_path).to_path_buf());
+        abs_path.to_string_lossy().to_lowercase()
     });
 
     let text = extract_text_from_file(file_path, Some(&args.encoding))?;

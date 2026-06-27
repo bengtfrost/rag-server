@@ -116,14 +116,16 @@ pub async fn ingest_directory(
         let sem = Arc::clone(&sem);
         let collection = args.collection.clone();
         let force = args.force;
+        // Acquire a permit before spawning, limiting concurrency
+        let permit = sem.clone().acquire_owned().await.unwrap();
         tasks.push(tokio::spawn(async move {
+            let _permit = permit; // held until the task ends
             if let Some(e) = err {
                 return Ok((std::path::Path::new(&fp).file_name().unwrap_or_default().to_string_lossy().to_string(), 0, format!("fel – {}", e)));
             }
             if chunks.is_empty() {
                 return Ok((std::path::Path::new(&fp).file_name().unwrap_or_default().to_string_lossy().to_string(), 0, "tom fil".to_string()));
             }
-            let _permit = sem.acquire().await.unwrap();
             let db_guard = db.lock().await;
             if db_guard.doc_exists(&collection, &doc_id)? && !force {
                 return Ok((std::path::Path::new(&fp).file_name().unwrap_or_default().to_string_lossy().to_string(), 0, "redan indexerad".to_string()));

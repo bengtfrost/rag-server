@@ -133,34 +133,55 @@ pub async fn call_tool(
 ) -> Result<String> {
     match name {
         "create_collection" => {
-            let args: create_collection::CreateCollectionArgs = serde_json::from_value(args)?;
+            let args: create_collection::CreateCollectionArgs = serde_json::from_value(args)
+                .map_err(|e| anyhow::anyhow!(
+                    "Invalid arguments for 'create_collection'. Expected {{ name: string }}. Error: {}", e
+                ))?;
             create_collection::create_collection(db, args).await
         }
         "ingest_file" => {
-            let args: ingest_file::IngestFileArgs = serde_json::from_value(args)?;
+            let args: ingest_file::IngestFileArgs = serde_json::from_value(args)
+                .map_err(|e| anyhow::anyhow!(
+                    "Invalid arguments for 'ingest_file'. Expected fields: collection, file_path (optional: document_id, encoding, force). Error: {}", e
+                ))?;
             ingest_file::ingest_file(db, cfg, client, args).await
         }
         "ingest_directory" => {
-            let args: ingest_directory::IngestDirectoryArgs = serde_json::from_value(args)?;
+            let args: ingest_directory::IngestDirectoryArgs = serde_json::from_value(args)
+                .map_err(|e| anyhow::anyhow!(
+                    "Invalid arguments for 'ingest_directory'. Expected fields: collection, directory_path (optional: file_extensions, encoding, force). Error: {}", e
+                ))?;
             ingest_directory::ingest_directory(db, cfg, client, args).await
         }
         "add_documents" => {
-            let args: add_documents::AddDocumentsArgs = serde_json::from_value(args)?;
+            let args: add_documents::AddDocumentsArgs = serde_json::from_value(args)
+                .map_err(|e| anyhow::anyhow!(
+                    "Invalid arguments for 'add_documents'. Expected fields: collection, ids (array), documents (array), force (bool). Error: {}", e
+                ))?;
             add_documents::add_documents(db, cfg, client, args).await
         }
         "query" => {
-            let args: query::QueryArgs = serde_json::from_value(args)?;
+            let args: query::QueryArgs = serde_json::from_value(args)
+                .map_err(|e| anyhow::anyhow!(
+                    "Invalid arguments for 'query'. Expected fields: collection, query (optional: top_k). Error: {}", e
+                ))?;
             query::query(db, cfg, client, args).await
         }
         "list_collections" => {
             list_collections::list_collections(db).await
         }
         "delete_documents" => {
-            let args: delete_documents::DeleteDocumentsArgs = serde_json::from_value(args)?;
+            let args: delete_documents::DeleteDocumentsArgs = serde_json::from_value(args)
+                .map_err(|e| anyhow::anyhow!(
+                    "Invalid arguments for 'delete_documents'. Expected fields: collection, ids (array). Error: {}", e
+                ))?;
             delete_documents::delete_documents(db, args).await
         }
         "delete_collection" => {
-            let args: delete_collection::DeleteCollectionArgs = serde_json::from_value(args)?;
+            let args: delete_collection::DeleteCollectionArgs = serde_json::from_value(args)
+                .map_err(|e| anyhow::anyhow!(
+                    "Invalid arguments for 'delete_collection'. Expected {{ name: string }}. Error: {}", e
+                ))?;
             delete_collection::delete_collection(db, args).await
         }
         _ => Err(anyhow::anyhow!("Unknown tool: {}", name)),

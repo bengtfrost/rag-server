@@ -12,7 +12,6 @@ impl Db {
     }
 
     pub fn init(&mut self, vec_path: &str) -> anyhow::Result<()> {
-        // sqlite-vec extension load requires unsafe
         unsafe {
             self.conn.load_extension_enable()?;
             self.conn.load_extension(vec_path, None)?;
@@ -147,6 +146,49 @@ impl Db {
                 params![&chunk_id, collection, chunk_text, parent_id, idx],
             )?;
         }
+        Ok(())
+    }
+
+    /// Insert or replace chunks for multiple documents in a single transaction.
+    /// `data`: vector of (parent_id, chunks, embeddings)
+    pub fn replace_chunks_batch(
+        &mut self,
+        collection: &str,
+        data: &[(String, Vec<String>, Vec<Vec<f32>>)],
+    ) -> anyhow::Result<()> {
+        if data.is_empty() {
+            return Ok(());
+        }
+
+        let tx = self.conn.transaction()?;
+
+        for (parent_id, chunks, embeddings) in data {
+            // Delete existing chunks for this parent
+            tx.execute(
+                "DELETE FROM vectors WHERE id LIKE ?",
+                [&format!("{}_ch%", parent_id)],
+            )?;
+            tx.execute(
+                "DELETE FROM docs WHERE parent_id = ? AND collection = ?",
+                [parent_id, collection],
+            )?;
+
+            // Insert new chunks
+            for (idx, (chunk_text, emb)) in chunks.iter().zip(embeddings.iter()).enumerate() {
+                let chunk_id = format!("{}_ch{}", parent_id, idx);
+                let emb_json = serde_json::to_string(emb)?;
+                tx.execute(
+                    "INSERT INTO vectors (id, collection, embedding) VALUES (?, ?, ?)",
+                    [&chunk_id, collection, &emb_json],
+                )?;
+                tx.execute(
+                    "INSERT INTO docs (id, collection, text, parent_id, chunk_index) VALUES (?, ?, ?, ?, ?)",
+                    params![&chunk_id, collection, chunk_text, parent_id, idx],
+                )?;
+            }
+        }
+
+        tx.commit()?;
         Ok(())
     }
 
