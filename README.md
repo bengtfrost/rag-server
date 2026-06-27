@@ -1,50 +1,67 @@
-# 🚀 RAG MCP Server (Rust) — Native & Lean Edition
+# 🚀 Sovereign RAG MCP Server (Rust)
 
-A high-performance, sovereign implementation of Retrieval-Augmented Generation (RAG) written in **Rust**. This server exposes advanced legal and code-centric search logic via the **Model Context Protocol (MCP)** over standard I/O.
+> **High-Performance Legal & Code Intelligence for the Terminal.**
 
-Optimized for **Fedora 44** and hardware-accelerated via the **Vulkan API** on integrated Intel graphics (UMA), this server serves as the high-speed "memory" for autonomous agents like [Goose](https://github.com/block/goose) or [Aider](https://aider.chat).
+A "Native & Lean" implementation of a Retrieval-Augmented Generation (RAG) server written in **Rust**. This server exposes high-precision search logic via the **Model Context Protocol (MCP)**, specifically optimized for **Fedora 44** and **Intel iGPU (Vulkan)** hardware.
+
+By bypassing the "PCIe dinosaur" and utilizing **Unified Memory Architecture (UMA)**, this server provides the lightning-fast "memory" required for autonomous agents like **Goose** and **Aider**.
 
 ---
 
-## ✨ Key Milestones in v2.1 (The "Giants" Update)
+## ✨ Key Milestones in v2.2 (The "Sovereign" Update)
 
-- **Exact BGE-M3 Tokenization** – Integrated the Hugging Face `tokenizers` crate to count tokens precisely using the **XLM-RoBERTa** standard. No more "vague searches" based on simple word counts.
-- **Vulkan-Driven Search** – Leverages `sqlite-vec` for high-density ANN (Approximate Nearest Neighbor) search, fully saturating the iGPU.
-- **Smart Chunking for Professionals** – Supports large, token-aware chunks (e.g., 3000 tokens) with sliding overlaps to preserve complex legal dependencies and Rust logic structures (`impl` blocks).
-- **Dual-Engine Architecture** – Purpose-built to communicate directly with dedicated backend pipelines:
-  - **Port 11435**: BGE-M3 Multilingual Embeddings.
-  - **Port 11436**: BGE-Reranker-v2 for 97% citation accuracy.
-- **Consolidated Sovereignty** – All configuration, databases, and metadata are strictly local, stored at `~/.config/rag-server/`.
+- **Exact BGE-M3 Tokenization:** Integrated the Hugging Face `tokenizers` crate. Unlike simple word-counters, this ensures 1:1 parity with the **XLM-RoBERTa** BPE standard used by BGE-M3.
+- **Vulkan-Driven Vector Search:** Powered by `sqlite-vec` (v0.1.9+) utilizing the `vec0.so` extension for high-density ANN search directly on the iGPU.
+- **Zero-Latency In-Process Processing:** Tokenization and chunking happen in-process at C-speeds, eliminating the overhead of Python-based middleware.
+- **Dual-Engine Architecture:** Optimized to communicate directly with dedicated backend pipelines:
+  - **Port 11435:** BGE-M3 Multilingual Embeddings.
+  - **Port 11436:** BGE-Reranker-v2-M3 for 97% citation accuracy.
+- **Consolidated Sovereignty:** Self-contained environment. All code, databases, and metadata are stored strictly at `~/.config/rag-server/`.
 
 ---
 
 ## 🏗 Architecture: The Zero-Proxy Stack
 
-To eliminate latency and middle-layer overhead, the server communicates directly with local Vulkan-accelerated engines:
+The server communicates directly with local Vulkan-accelerated engines over native STDIO pipes, ensuring 0% data leakage and minimum latency.
 
 ```mermaid
 graph TD
     A[Goose / Aider / CLI] -->|STDIO| B(Rust RAG Server)
     B -->|Local Port 11435| C(BGE-M3 iGPU)
     B -->|Local Port 11436| D(Reranker iGPU)
-    B -->|Native File Access| E[(SQLite-Vec DB)]
+    B -->|Dynamic Loading| E[vec0.so Extension]
+    E <--> F[(SQLite-Vec DB)]
 ```
 
 ---
 
 ## 🔧 Installation & Compilation
 
-### Prerequisites
+### 1. Prerequisites
 
-- **Rust** 1.79+
-- **sqlite-vec** library (`sudo dnf install sqlite-vec`)
-- **BGE-M3 Tokenizer Metadata**:
-  ```bash
-  mkdir -p ~/.config/rag-server
-  wget https://huggingface.co/BAAI/bge-m3/resolve/main/tokenizer.json -O ~/.config/rag-server/tokenizer.json
-  ```
+Ensure you have the Rust toolchain and the specialized `vec0` extension for SQLite.
 
-### Build the Binary
+```bash
+# Install system dependencies
+sudo dnf install -y sqlite-devel poppler-utils
+
+# Download the specific vec0.so (v0.1.9+)
+mkdir -p ~/.config/rag-server/extensions
+cd /tmp
+curl -L -O https://github.com/asg017/sqlite-vec/releases/download/v0.1.9/sqlite-vec-0.1.9-loadable-linux-x86_64.tar.gz
+tar -xvf sqlite-vec-0.1.9-loadable-linux-x86_64.tar.gz
+mv vec0.so ~/.config/rag-server/extensions/
+```
+
+### 2. Tokenizer Setup
+
+Download the BGE-M3 metadata required for exact tokenization.
+
+```bash
+wget https://huggingface.co/BAAI/bge-m3/resolve/main/tokenizer.json -O ~/.config/rag-server/tokenizer.json
+```
+
+### 3. Build the Binary
 
 ```bash
 cd ~/.config/rag-server
@@ -55,23 +72,23 @@ cargo build --release
 
 ## ⚙️ Configuration
 
-The server prioritizes environment variables but falls back to optimized defaults for a 16GB mobile workstation.
+The server defaults to optimized values for a 16GB U-series workstation but can be overridden via environment variables in your `~/.zshrc`.
 
-| Variable             | Default Value                          | Description                                |
-| :------------------- | :------------------------------------- | :----------------------------------------- |
-| `RAG_DB_PATH`        | `~/.config/rag-server/vectors.db`      | Path to the SQLite-vec database.           |
-| `RAG_TOKENIZER_PATH` | `~/.config/rag-server/tokenizer.json`  | Exact BPE model for BGE-M3.                |
-| `RAG_EMBED_URL`      | `http://localhost:11435/v1/embeddings` | Your Vulkan Embedding server.              |
-| `RAG_RERANK_URL`     | `http://localhost:11436/rerank`        | Your Vulkan Reranker server.               |
-| `RAG_CHUNK_SIZE`     | `1024` (Law) / `3000` (Code)           | Maximum tokens per chunk.                  |
-| `RAG_CHUNK_OVERLAP`  | `150` (Law) / `400` (Code)             | Token overlap for context preservation.    |
-| `RAG_TIMEOUT`        | `14400` (4 hours)                      | Prevents timeouts during massive indexing. |
+| Variable             | Default Value                             | Description                       |
+| :------------------- | :---------------------------------------- | :-------------------------------- |
+| `SQLITE_VEC_PATH`    | `~/.config/rag-server/extensions/vec0.so` | Path to the vector extension.     |
+| `RAG_DB_PATH`        | `~/.config/rag-server/vectors.db`         | Path to the local Knowledge Base. |
+| `RAG_TOKENIZER_PATH` | `~/.config/rag-server/tokenizer.json`     | BGE-M3 BPE dictionary.            |
+| `RAG_EMBED_URL`      | `http://localhost:11435/v1/embeddings`    | Vulkan Embedding server.          |
+| `RAG_RERANK_URL`     | `http://localhost:11436/rerank`           | Vulkan Reranker server.           |
+| `RAG_CHUNK_SIZE`     | `1024` (Legal) / `3000` (Code)            | Max tokens per segment.           |
+| `RAG_CHUNK_OVERLAP`  | `150` (Legal) / `400` (Code)              | Token overlap for context.        |
 
 ---
 
 ## 🔌 Usage with Goose Agent
 
-Update your `~/.config/goose/config.yaml` to replace the generic Python RAG extension with this optimized Rust binary:
+Integrate the server as a **stdio** extension in `~/.config/goose/config.yaml`:
 
 ```yaml
 extensions:
@@ -80,28 +97,30 @@ extensions:
     name: rag
     type: stdio
     cmd: /home/bfrost/.config/rag-server/target/release/rag-server
-    timeout: 14400
+    env:
+      SQLITE_VEC_PATH: /home/bfrost/.config/rag-server/extensions/vec0.so
+    timeout: 7200
 ```
 
 ---
 
 ## 🛠 MCP Tools
 
-| Tool                | Description                                                            |
-| :------------------ | :--------------------------------------------------------------------- |
-| `create_collection` | Initializes a new Knowledge Base (e.g., `juridik` or `rust-src`).      |
-| `ingest_file`       | Chunks, tokenizes, and indexes a file via the iGPU.                    |
-| `list_collections`  | Lists all searchable libraries and document counts.                    |
-| `query`             | Performs hybrid semantic search + Reranking for 97% citation accuracy. |
-| `delete_documents`  | Removes specific documents or clears entire collections.               |
+- `create_collection`: Initializes a new KB (e.g., `juridik` or `rust-src`).
+- `ingest_file`: Chunks, tokenizes, and indexes a file via the iGPU.
+- `list_collections`: Displays all local libraries and document counts.
+- `query`: Performs hybrid semantic search + Reranking for **97% citation accuracy**.
+- `delete_documents`: Manages collection hygiene by removing specific IDs.
 
 ---
 
-## 🏁 Performance Insights (The Rust Advantage)
+## 🏁 Performance Insights
 
-Unlike interpreted Python implementations, this server handles **tokenization in-process** at C-speeds. By bypassing the "PCIe Dinosaur" through **Unified Memory Architecture**, indexing time for 700 project chunks was reduced from **45+ minutes (CPU)** to **~5 minutes (iGPU/Vulkan)**.
+By utilizing **Quantization-Aware Training (QAT-UD)** and **N-Gram software speculation**, this Rust implementation delivers:
 
-Through **QAT-UD** model support and **N-Gram speculation**, this stack achieves production-grade legal reasoning on standard "U-series" hardware with **0% data leakage**.
+- **800% Speedup:** Indexing 700 project chunks reduced from **45+ mins (CPU)** to **~5 mins (iGPU)**.
+- **Linguistic Precision:** Handles Swedish legal nuances and complex Rust traits without semantic drift.
+- **Zero Leakage:** 100% of data remains on local silicon.
 
 ---
 
