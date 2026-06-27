@@ -142,3 +142,12 @@ valgrind.out
 *.rej
 *.patch
 *.diff
+
+# ========== AI / MACHINE LEARNING ==========
+# BGE-M3 Tokenizer metadata
+tokenizer.json
+
+# Large model files (if you ever move them into the repo)
+*.gguf
+*.bin
+*.onnx
