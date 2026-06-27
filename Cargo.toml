@@ -1,0 +1,19 @@
+[package]
+name = "rag-server"
+version = "2.0.0"
+edition = "2024"
+
+[dependencies]
+tokio = { version = "1", features = ["full"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+rusqlite = { version = "0.32", features = ["bundled", "load_extension"] }
+reqwest = { version = "0.12", features = ["json", "stream"] }
+anyhow = "1"
+thiserror = "1"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+futures = "0.3"
+pdf-extract = "0.6"
+dirs = "5"
+regex = "1"

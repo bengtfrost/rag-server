@@ -1,0 +1,144 @@
+# ========== RUST / CARGO ==========
+/target/
+**/*.rs.bk
+*.pdb
+*.exp
+*.lib
+*.dylib
+*.dll
+*.so
+*.a
+*.o
+*.obj
+*.exe
+
+# Cargo.lock – commit it for binaries, ignore for libraries
+# /Cargo.lock
+
+# ========== DEPENDENCIES ==========
+# If you use `cargo vendor` or similar
+/vendor/
+.cargo-ok
+
+# ========== EDITORS & IDES ==========
+# VSCode
+.vscode/
+*.code-workspace
+*.code-workspace.bak
+
+# IntelliJ / CLion
+.idea/
+*.iml
+*.iws
+*.ipr
+out/
+.idea_modules/
+
+# Vim
+*.swp
+*.swo
+*~
+*.un~
+*.orig
+
+# Emacs
+*~
+\#*\#
+/.emacs.desktop
+/.emacs.desktop.lock
+
+# Sublime Text
+*.sublime-workspace
+*.sublime-project
+
+# ========== OS GENERATED FILES ==========
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
+.Spotlight-V100
+.Trashes
+
+# Windows
+Thumbs.db
+desktop.ini
+ehthumbs.db
+*.tmp
+
+# Linux
+*~
+.directory
+*.swp
+*.swo
+
+# ========== LOGS & DATABASES ==========
+*.log
+*.sqlite
+*.sqlite3
+*.db
+*.db-wal
+*.db-shm
+*.vdb
+*.vdb-wal
+*.vdb-shm
+
+# ========== ENVIRONMENT & SECRETS ==========
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.crt
+*.p12
+*.pfx
+*.secret
+*.secrets
+config.toml
+!config.toml.example
+
+# ========== DOCUMENTATION ==========
+target/doc/
+book/
+docs/
+*.pdf
+*.epub
+
+# ========== TESTS & COVERAGE ==========
+*.prof
+*.gcno
+*.gcda
+*.gcov
+coverage/
+lcov.info
+*.lcov
+
+# ========== MISC ==========
+# Python cache (if you have mixed projects)
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+.venv/
+venv/
+ENV/
+env/
+
+# Debugging artifacts
+gdb_history.txt
+valgrind.out
+
+# ========== GITHUB SPECIFIC ==========
+.github/*.local
+
+# ========== BACKUP FILES ==========
+*.bak
+*.backup
+*.old
+*.orig
+*.rej
+*.patch
+*.diff
