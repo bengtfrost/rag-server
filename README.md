@@ -17,6 +17,7 @@ By bypassing the "PCIe dinosaur" and utilizing **Unified Memory Architecture (UM
   - **Port 11435:** BGE-M3 Multilingual Embeddings.
   - **Port 11436:** BGE-Reranker-v2-M3 for 97% citation accuracy.
 - **Consolidated Sovereignty:** Self-contained environment. All code, databases, and metadata are stored strictly at `~/.config/rag-server/`.
+- **Full CLI with `--help`:** The server now doubles as a powerful command-line tool. All tools are accessible as subcommands with built-in help and argument parsing via `clap`.
 
 ---
 
@@ -74,15 +75,19 @@ cargo build --release
 
 The server defaults to optimized values for a 16GB U-series workstation but can be overridden via environment variables in your `~/.zshrc`.
 
-| Variable             | Default Value                             | Description                       |
-| :------------------- | :---------------------------------------- | :-------------------------------- |
-| `SQLITE_VEC_PATH`    | `~/.config/rag-server/extensions/vec0.so` | Path to the vector extension.     |
-| `RAG_DB_PATH`        | `~/.config/rag-server/vectors.db`         | Path to the local Knowledge Base. |
-| `RAG_TOKENIZER_PATH` | `~/.config/rag-server/tokenizer.json`     | BGE-M3 BPE dictionary.            |
-| `RAG_EMBED_URL`      | `http://localhost:11435/v1/embeddings`    | Vulkan Embedding server.          |
-| `RAG_RERANK_URL`     | `http://localhost:11436/rerank`           | Vulkan Reranker server.           |
-| `RAG_CHUNK_SIZE`     | `1024` (Legal) / `3000` (Code)            | Max tokens per segment.           |
-| `RAG_CHUNK_OVERLAP`  | `150` (Legal) / `400` (Code)              | Token overlap for context.        |
+| Variable                   | Default Value                             | Description                             |
+| :------------------------- | :---------------------------------------- | :-------------------------------------- |
+| `SQLITE_VEC_PATH`          | `~/.config/rag-server/extensions/vec0.so` | Path to the vector extension.           |
+| `RAG_DB_PATH`              | `~/.config/rag-server/vectors.db`         | Path to the local Knowledge Base.       |
+| `RAG_TOKENIZER_PATH`       | `~/.config/rag-server/tokenizer.json`     | BGE-M3 BPE dictionary.                  |
+| `RAG_EMBED_URL`            | `http://localhost:11435/v1/embeddings`    | Vulkan Embedding server.                |
+| `RAG_RERANK_URL`           | `http://localhost:11436/rerank`           | Vulkan Reranker server.                 |
+| `RAG_CHUNK_SIZE`           | `1024` (Legal) / `3000` (Code)            | Max tokens per segment.                 |
+| `RAG_CHUNK_OVERLAP`        | `150` (Legal) / `400` (Code)              | Token overlap for context.              |
+| `RAG_EMBED_MODEL`          | `bge-m3`                                  | Model name sent to the embedder.        |
+| `RAG_RERANK_MODEL`         | `bge-reranker-v2-m3`                      | Model name sent to the reranker.        |
+| `RAG_RERANK_MIN_SCORE`     | `0.3`                                     | Minimum relevance score to keep.        |
+| `RAG_MAX_CONCURRENT_FILES` | `4`                                       | Parallelism when ingesting directories. |
 
 ---
 
@@ -104,13 +109,69 @@ extensions:
 
 ---
 
-## 🛠 MCP Tools
+## 🛠 MCP Tools (available to Goose)
 
-- `create_collection`: Initializes a new KB (e.g., `juridik` or `rust-src`).
-- `ingest_file`: Chunks, tokenizes, and indexes a file via the iGPU.
-- `list_collections`: Displays all local libraries and document counts.
-- `query`: Performs hybrid semantic search + Reranking for **97% citation accuracy**.
-- `delete_documents`: Manages collection hygiene by removing specific IDs.
+- `create_collection` – Initializes a new KB (e.g., `juridik` or `rust-src`).
+- `ingest_file` – Chunks, tokenizes, and indexes a file via the iGPU.
+- `ingest_directory` – Bulk‑ingests all matching files in a directory with parallel processing.
+- `add_documents` – Indexes raw text strings directly from JSON.
+- `query` – Performs hybrid semantic search + reranking for **97% citation accuracy**.
+- `list_collections` – Displays all local libraries and document counts.
+- `delete_documents` – Deletes one or more documents from a collection.
+- `delete_collection` – Removes an entire collection and all its data.
+
+---
+
+## 🖥 CLI Usage (New in v2.2)
+
+The same binary now also acts as a full‑featured command‑line tool. Run it without arguments to start the MCP server (stdin/stdout). Run it with a subcommand to perform operations directly.
+
+### Global help
+
+```bash
+./target/release/rag-server --help
+```
+
+### Subcommand help
+
+```bash
+./target/release/rag-server create-collection --help
+./target/release/rag-server ingest-file --help
+./target/release/rag-server ingest-directory --help
+./target/release/rag-server add-documents --help
+./target/release/rag-server query --help
+./target/release/rag-server list-collections --help
+./target/release/rag-server delete-documents --help
+./target/release/rag-server delete-collection --help
+```
+
+### Examples
+
+```bash
+# Create a new collection
+./target/release/rag-server create-collection --name juridik
+
+# Ingest a single PDF
+./target/release/rag-server ingest-file --collection juridik --file-path ~/dokument/lag.pdf
+
+# Ingest all .txt and .pdf files in a directory
+./target/release/rag-server ingest-directory --collection juridik --directory-path ~/dokument/ --extensions txt,pdf
+
+# Add raw documents from a JSON file (ids and documents arrays)
+./target/release/rag-server add-documents --collection juridik --input ~/data.json
+
+# Query the collection
+./target/release/rag-server query --collection juridik --query "vad är regeringsformen?" --top-k 3
+
+# List all collections
+./target/release/rag-server list-collections
+
+# Delete specific documents
+./target/release/rag-server delete-documents --collection juridik --ids doc1,doc2
+
+# Delete an entire collection
+./target/release/rag-server delete-collection --name juridik
+```
 
 ---
 

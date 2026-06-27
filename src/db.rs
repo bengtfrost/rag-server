@@ -2,22 +2,19 @@ use anyhow::Result;
 use rusqlite::{Connection, params};
 use std::env;
 
-pub struct VectorDB {
+pub struct Db {
     conn: Connection,
 }
 
-impl VectorDB {
+impl Db {
     pub fn new(path: &str) -> Result<Self> {
         let conn = Connection::open(path)?;
 
         // Hämta sökvägen till tillägget från miljövariabeln
-        // Om den saknas försöker vi ladda den som "vec0" från systemets bibliotek
         let ext_path = env::var("SQLITE_VEC_PATH").unwrap_or_else(|_| "vec0".to_string());
 
-        // Aktivera och ladda vec0 (v0.1.9+)
         unsafe {
             conn.load_extension_enable()?;
-            // För vec0.so krävs ofta att man anger entry point "sqlite3_vec_init"
             conn.load_extension(ext_path, Some("sqlite3_vec_init"))?;
             conn.load_extension_disable()?;
         }
@@ -37,7 +34,6 @@ impl VectorDB {
             [],
         )?;
 
-        // Skapa den virtuella vektortabellen (1024 dimensioner för BGE-M3)
         conn.execute(
             "CREATE VIRTUAL TABLE IF NOT EXISTS vectors USING vec0(
                 id TEXT PRIMARY KEY, 
@@ -50,6 +46,8 @@ impl VectorDB {
         Ok(Self { conn })
     }
 
+    // ===== COLLECTION METODER =====
+
     pub fn add_collection(&self, name: &str) -> Result<()> {
         self.conn.execute(
             "INSERT OR IGNORE INTO collections (name) VALUES (?)",
@@ -58,6 +56,94 @@ impl VectorDB {
         Ok(())
     }
 
+    pub fn insert_collection(&self, name: &str) -> Result<()> {
+        self.add_collection(name) // alias
+    }
+
+    pub fn collection_exists(&self, name: &str) -> Result<bool> {
+        let count: i64 = self.conn.query_row(
+            "SELECT COUNT(*) FROM collections WHERE name = ?",
+            [name],
+            |row| row.get(0),
+        )?;
+        Ok(count > 0)
+    }
+
+    pub fn get_collection_stats(&self, name: &str) -> Result<(i64, i64)> {
+        let doc_count: i64 = self.conn.query_row(
+            "SELECT COUNT(DISTINCT parent_id) FROM docs WHERE collection = ?",
+            [name],
+            |row| row.get(0),
+        )?;
+        let chunk_count: i64 = self.conn.query_row(
+            "SELECT COUNT(*) FROM docs WHERE collection = ?",
+            [name],
+            |row| row.get(0),
+        )?;
+        Ok((doc_count, chunk_count))
+    }
+
+    pub fn delete_collection(&self, name: &str) -> Result<()> {
+        self.conn
+            .execute("DELETE FROM docs WHERE collection = ?", [name])?;
+        self.conn
+            .execute("DELETE FROM vectors WHERE collection = ?", [name])?;
+        self.conn
+            .execute("DELETE FROM collections WHERE name = ?", [name])?;
+        Ok(())
+    }
+
+    pub fn clear_collection(&self, name: &str) -> Result<()> {
+        self.conn
+            .execute("DELETE FROM docs WHERE collection = ?", [name])?;
+        self.conn
+            .execute("DELETE FROM vectors WHERE collection = ?", [name])?;
+        Ok(())
+    }
+
+    pub fn list_collections(&self) -> Result<Vec<(String, i64)>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT c.name, COUNT(DISTINCT d.parent_id) 
+             FROM collections c 
+             LEFT JOIN docs d ON c.name = d.collection 
+             GROUP BY c.name",
+        )?;
+        let rows = stmt.query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?;
+        let mut res = Vec::new();
+        for r in rows {
+            res.push(r?);
+        }
+        Ok(res)
+    }
+
+    // ===== DOKUMENT METODER =====
+
+    pub fn doc_exists(&self, collection: &str, doc_id: &str) -> Result<bool> {
+        let count: i64 = self.conn.query_row(
+            "SELECT COUNT(*) FROM docs WHERE collection = ? AND parent_id = ?",
+            params![collection, doc_id],
+            |row| row.get(0),
+        )?;
+        Ok(count > 0)
+    }
+
+    pub fn delete_documents(&self, collection: &str, doc_ids: &[String]) -> Result<()> {
+        for doc_id in doc_ids {
+            self.conn.execute(
+                "DELETE FROM docs WHERE collection = ? AND parent_id = ?",
+                params![collection, doc_id],
+            )?;
+            self.conn.execute(
+                "DELETE FROM vectors WHERE collection = ? AND id LIKE ?",
+                params![collection, format!("{}%", doc_id)],
+            )?;
+        }
+        Ok(())
+    }
+
+    // ===== CHUNK METODER =====
+
+    // OBS: tar ägande av chunks och embs (inte referenser)
     pub fn insert_chunks(
         &self,
         coll: &str,
@@ -82,6 +168,49 @@ impl VectorDB {
         Ok(())
     }
 
+    pub fn replace_chunks_batch(
+        &self,
+        collection: &str,
+        data: &[(String, Vec<String>, Vec<Vec<f32>>)],
+    ) -> Result<()> {
+        for (doc_id, chunks, embs) in data {
+            // Ta bort gamla
+            self.conn.execute(
+                "DELETE FROM docs WHERE collection = ? AND parent_id = ?",
+                params![collection, doc_id],
+            )?;
+            self.conn.execute(
+                "DELETE FROM vectors WHERE collection = ? AND id LIKE ?",
+                params![collection, format!("{}%", doc_id)],
+            )?;
+            // Lägg till nya (klona för att äga)
+            self.insert_chunks(collection, doc_id, chunks.clone(), embs.clone())?;
+        }
+        Ok(())
+    }
+
+    pub fn get_chunk_texts(&self, chunk_ids: &[String]) -> Result<Vec<(String, String, String)>> {
+        if chunk_ids.is_empty() {
+            return Ok(Vec::new());
+        }
+        let placeholders = chunk_ids.iter().map(|_| "?").collect::<Vec<_>>().join(",");
+        let query = format!(
+            "SELECT id, text, parent_id FROM docs WHERE id IN ({})",
+            placeholders
+        );
+        let mut stmt = self.conn.prepare(&query)?;
+        let rows = stmt.query_map(rusqlite::params_from_iter(chunk_ids.iter()), |row| {
+            Ok((row.get(0)?, row.get(1)?, row.get(2)?))
+        })?;
+        let mut result = Vec::new();
+        for row in rows {
+            result.push(row?);
+        }
+        Ok(result)
+    }
+
+    // ===== SÖK METODER =====
+
     pub fn search(
         &self,
         coll: &str,
@@ -90,7 +219,6 @@ impl VectorDB {
     ) -> Result<Vec<(String, String, f32)>> {
         let emb_json = serde_json::to_string(&emb)?;
 
-        // Notera: 'distance' hämtas från den virtuella tabellen vec0
         let mut stmt = self.conn.prepare(
             "SELECT v.id, d.text, v.distance 
              FROM vectors v 
@@ -102,21 +230,6 @@ impl VectorDB {
             Ok((row.get(0)?, row.get(1)?, row.get(2)?))
         })?;
 
-        let mut res = Vec::new();
-        for r in rows {
-            res.push(r?);
-        }
-        Ok(res)
-    }
-
-    pub fn list_collections(&self) -> Result<Vec<(String, i64)>> {
-        let mut stmt = self.conn.prepare(
-            "SELECT c.name, COUNT(DISTINCT d.parent_id) 
-             FROM collections c 
-             LEFT JOIN docs d ON c.name = d.collection 
-             GROUP BY c.name",
-        )?;
-        let rows = stmt.query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?;
         let mut res = Vec::new();
         for r in rows {
             res.push(r?);

@@ -1,23 +1,29 @@
+use clap::Args;
 use serde::Deserialize;
 use std::sync::Arc;
+use std::time::Instant;
 use tokio::sync::Mutex;
 use tracing::debug;
-use std::time::Instant;
 
+use crate::chunker::chunk_text_exact;
 use crate::config::Config;
 use crate::db::Db;
-use crate::extractor::extract_text_from_file;
-use crate::chunker::chunk_text_exact;
 use crate::embedder::get_embeddings;
+use crate::extractor::extract_text_from_file;
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Args)]
 pub struct IngestFileArgs {
+    #[arg(short, long)]
     pub collection: String,
+    #[arg(short, long)]
     pub file_path: String,
+    #[arg(short, long)]
     #[serde(default)]
     pub document_id: Option<String>,
+    #[arg(short, long, default_value = "utf-8")]
     #[serde(default = "default_encoding")]
     pub encoding: String,
+    #[arg(short, long)]
     #[serde(default)]
     pub force: bool,
 }
@@ -48,7 +54,10 @@ pub async fn ingest_file(
     let size_kb = std::fs::metadata(file_path)?.len() / 1024;
     debug!(
         "Startar ingest av '{}' ({} KB, doc_id='{}')",
-        std::path::Path::new(file_path).file_name().unwrap_or_default().to_string_lossy(),
+        std::path::Path::new(file_path)
+            .file_name()
+            .unwrap_or_default()
+            .to_string_lossy(),
         size_kb,
         doc_id
     );
@@ -65,23 +74,40 @@ pub async fn ingest_file(
     drop(db_guard);
 
     let t0 = Instant::now();
-    let chunks = chunk_text_exact(&text, cfg.chunk_size, cfg.chunk_overlap)?;
+    let chunks = chunk_text_exact(
+        &text, // ← rätt
+        cfg.chunk_size,
+        cfg.chunk_overlap,
+        &cfg.tokenizer_path,
+    )?;
     if chunks.is_empty() {
         return Ok("Ingen text att indexera.".to_string());
     }
 
     let embeddings = get_embeddings(client, cfg, &chunks, &doc_id).await?;
     let db_guard = db.lock().await;
-    db_guard.insert_chunks(&args.collection, &doc_id, &chunks, &embeddings)?;
+    db_guard.insert_chunks(
+        &args.collection,
+        &doc_id,
+        chunks.clone(),
+        embeddings.clone(),
+    )?;
     drop(db_guard);
 
     let elapsed = t0.elapsed();
-    let action = if args.force { "Re-indexerade" } else { "Indexerade" };
+    let action = if args.force {
+        "Re-indexerade"
+    } else {
+        "Indexerade"
+    };
     Ok(format!(
         "✓ Klar! {} {} segment från '{}' (doc_id='{}') i '{}' på {}.",
         action,
         chunks.len(),
-        std::path::Path::new(file_path).file_name().unwrap_or_default().to_string_lossy(),
+        std::path::Path::new(file_path)
+            .file_name()
+            .unwrap_or_default()
+            .to_string_lossy(),
         doc_id,
         args.collection,
         format_duration(elapsed)

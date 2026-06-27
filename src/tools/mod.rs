@@ -1,19 +1,29 @@
-use serde_json::{json, Value};
+use anyhow::Result;
+use serde_json::{Value, json};
 use std::sync::Arc;
 use tokio::sync::Mutex;
-use anyhow::Result;
 
 use crate::config::Config;
 use crate::db::Db;
 
-mod create_collection;
-mod ingest_file;
-mod ingest_directory;
-mod add_documents;
-mod query;
-mod list_collections;
-mod delete_documents;
-mod delete_collection;
+// Deklarera alla undermoduler som PUBLIKA
+pub mod add_documents;
+pub mod create_collection;
+pub mod delete_collection;
+pub mod delete_documents;
+pub mod ingest_directory;
+pub mod ingest_file;
+pub mod list_collections;
+pub mod query;
+
+// Re-exportera Args-strukturer för att användas i main.rs
+pub use add_documents::AddDocumentsArgs;
+pub use create_collection::CreateCollectionArgs;
+pub use delete_collection::DeleteCollectionArgs;
+pub use delete_documents::DeleteDocumentsArgs;
+pub use ingest_directory::IngestDirectoryArgs;
+pub use ingest_file::IngestFileArgs;
+pub use query::QueryArgs;
 
 pub fn list_tools() -> Vec<serde_json::Value> {
     vec![
@@ -116,7 +126,11 @@ pub fn list_tools() -> Vec<serde_json::Value> {
     ]
 }
 
-fn tool_descriptor(name: &str, description: &str, input_schema: serde_json::Value) -> serde_json::Value {
+fn tool_descriptor(
+    name: &str,
+    description: &str,
+    input_schema: serde_json::Value,
+) -> serde_json::Value {
     json!({
         "name": name,
         "description": description,
@@ -167,9 +181,7 @@ pub async fn call_tool(
                 ))?;
             query::query(db, cfg, client, args).await
         }
-        "list_collections" => {
-            list_collections::list_collections(db).await
-        }
+        "list_collections" => list_collections::list_collections(db).await,
         "delete_documents" => {
             let args: delete_documents::DeleteDocumentsArgs = serde_json::from_value(args)
                 .map_err(|e| anyhow::anyhow!(

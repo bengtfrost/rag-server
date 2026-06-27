@@ -1,25 +1,31 @@
+use clap::Args;
+use futures::future::join_all;
 use serde::Deserialize;
 use std::sync::Arc;
 use tokio::sync::{Mutex, Semaphore};
-use futures::future::join_all;
 use tracing::debug;
 
+use crate::chunker::chunk_text_exact;
 use crate::config::Config;
 use crate::db::Db;
-use crate::extractor::extract_text_from_file;
-use crate::chunker::chunk_text_exact;
 use crate::embedder::get_embeddings;
+use crate::extractor::extract_text_from_file;
 
 const DEFAULT_EXTENSIONS: &[&str] = &[".txt", ".pdf", ".md", ".rst", ".text"];
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Args)]
 pub struct IngestDirectoryArgs {
+    #[arg(short, long)]
     pub collection: String,
+    #[arg(short, long)]
     pub directory_path: String,
+    #[arg(short = 'x', long = "extensions", value_delimiter = ',')]
     #[serde(default)]
     pub file_extensions: Option<Vec<String>>,
+    #[arg(short, long, default_value = "utf-8")]
     #[serde(default = "default_encoding")]
     pub encoding: String,
+    #[arg(short, long)]
     #[serde(default)]
     pub force: bool,
 }
@@ -39,11 +45,19 @@ pub async fn ingest_directory(
         return Err(anyhow::anyhow!("Katalogen hittades inte: {}", dir_path));
     }
 
-    let exts: Vec<String> = args.file_extensions.clone().unwrap_or_else(|| {
-        DEFAULT_EXTENSIONS.iter().map(|s| s.to_string()).collect()
-    });
-    let exts_set: std::collections::HashSet<String> = exts.iter()
-        .map(|e| if e.starts_with('.') { e.clone() } else { format!(".{}", e) })
+    let exts: Vec<String> = args
+        .file_extensions
+        .clone()
+        .unwrap_or_else(|| DEFAULT_EXTENSIONS.iter().map(|s| s.to_string()).collect());
+    let exts_set: std::collections::HashSet<String> = exts
+        .iter()
+        .map(|e| {
+            if e.starts_with('.') {
+                e.clone()
+            } else {
+                format!(".{}", e)
+            }
+        })
         .collect();
 
     let entries = std::fs::read_dir(dir_path)?;
@@ -68,37 +82,61 @@ pub async fn ingest_directory(
         ));
     }
 
-    debug!("Katalogindexering startar: {} filer i '{}' (force={})...", files.len(), dir_path, args.force);
+    debug!(
+        "Katalogindexering startar: {} filer i '{}' (force={})...",
+        files.len(),
+        dir_path,
+        args.force
+    );
     let db_guard = db.lock().await;
     db_guard.insert_collection(&args.collection)?;
     drop(db_guard);
 
     let mut prepared = Vec::new();
     for fp in &files {
-        let doc_id = std::path::Path::new(fp).file_name().unwrap_or_default().to_string_lossy().to_lowercase();
+        let doc_id = std::path::Path::new(fp)
+            .file_name()
+            .unwrap_or_default()
+            .to_string_lossy()
+            .to_lowercase();
         match extract_text_from_file(fp, Some(&args.encoding)) {
-            Ok(text) => {
-                match chunk_text_exact(&text, cfg.chunk_size, cfg.chunk_overlap) {
-                    Ok(chunks) => {
-                        debug!("  Chunkat: '{}' (doc_id='{}') → {} segment", 
-                            std::path::Path::new(fp).file_name().unwrap_or_default().to_string_lossy(), 
-                            doc_id, 
-                            chunks.len()
-                        );
-                        prepared.push((fp.clone(), doc_id, chunks, None));
-                    }
-                    Err(e) => {
-                        debug!("  Fel vid chunkning av '{}': {}", 
-                            std::path::Path::new(fp).file_name().unwrap_or_default().to_string_lossy(), 
-                            e
-                        );
-                        prepared.push((fp.clone(), doc_id, Vec::new(), Some(e.to_string())));
-                    }
+            Ok(text) => match chunk_text_exact(
+                &text,
+                cfg.chunk_size,
+                cfg.chunk_overlap,
+                &cfg.tokenizer_path,
+            ) {
+                Ok(chunks) => {
+                    debug!(
+                        "  Chunkat: '{}' (doc_id='{}') → {} segment",
+                        std::path::Path::new(fp)
+                            .file_name()
+                            .unwrap_or_default()
+                            .to_string_lossy(),
+                        doc_id,
+                        chunks.len()
+                    );
+                    prepared.push((fp.clone(), doc_id, chunks, None));
                 }
-            }
+                Err(e) => {
+                    debug!(
+                        "  Fel vid chunkning av '{}': {}",
+                        std::path::Path::new(fp)
+                            .file_name()
+                            .unwrap_or_default()
+                            .to_string_lossy(),
+                        e
+                    );
+                    prepared.push((fp.clone(), doc_id, Vec::new(), Some(e.to_string())));
+                }
+            },
             Err(e) => {
-                debug!("  Fel vid läsning av '{}': {}", 
-                    std::path::Path::new(fp).file_name().unwrap_or_default().to_string_lossy(), 
+                debug!(
+                    "  Fel vid läsning av '{}': {}",
+                    std::path::Path::new(fp)
+                        .file_name()
+                        .unwrap_or_default()
+                        .to_string_lossy(),
                     e
                 );
                 prepared.push((fp.clone(), doc_id, Vec::new(), Some(e.to_string())));
@@ -107,7 +145,8 @@ pub async fn ingest_directory(
     }
 
     let sem = Arc::new(Semaphore::new(cfg.max_concurrent_files));
-    let mut tasks: Vec<tokio::task::JoinHandle<anyhow::Result<(String, usize, String)>>> = Vec::new();
+    let mut tasks: Vec<tokio::task::JoinHandle<anyhow::Result<(String, usize, String)>>> =
+        Vec::new();
 
     for (fp, doc_id, chunks, err) in prepared {
         let db = Arc::clone(db);
@@ -121,24 +160,56 @@ pub async fn ingest_directory(
         tasks.push(tokio::spawn(async move {
             let _permit = permit; // held until the task ends
             if let Some(e) = err {
-                return Ok((std::path::Path::new(&fp).file_name().unwrap_or_default().to_string_lossy().to_string(), 0, format!("fel – {}", e)));
+                return Ok((
+                    std::path::Path::new(&fp)
+                        .file_name()
+                        .unwrap_or_default()
+                        .to_string_lossy()
+                        .to_string(),
+                    0,
+                    format!("fel – {}", e),
+                ));
             }
             if chunks.is_empty() {
-                return Ok((std::path::Path::new(&fp).file_name().unwrap_or_default().to_string_lossy().to_string(), 0, "tom fil".to_string()));
+                return Ok((
+                    std::path::Path::new(&fp)
+                        .file_name()
+                        .unwrap_or_default()
+                        .to_string_lossy()
+                        .to_string(),
+                    0,
+                    "tom fil".to_string(),
+                ));
             }
             let db_guard = db.lock().await;
             if db_guard.doc_exists(&collection, &doc_id)? && !force {
-                return Ok((std::path::Path::new(&fp).file_name().unwrap_or_default().to_string_lossy().to_string(), 0, "redan indexerad".to_string()));
+                return Ok((
+                    std::path::Path::new(&fp)
+                        .file_name()
+                        .unwrap_or_default()
+                        .to_string_lossy()
+                        .to_string(),
+                    0,
+                    "redan indexerad".to_string(),
+                ));
             }
             drop(db_guard);
 
             let embeddings = get_embeddings(&client, &cfg, &chunks, &doc_id).await?;
             let db_guard = db.lock().await;
-            db_guard.insert_chunks(&collection, &doc_id, &chunks, &embeddings)?;
+            db_guard.insert_chunks(&collection, &doc_id, chunks.clone(), embeddings.clone())?;
             drop(db_guard);
 
             let action = if force { "re-indexerad" } else { "indexerad" };
-            Ok((std::path::Path::new(&fp).file_name().unwrap_or_default().to_string_lossy().to_string(), chunks.len(), format!("{} segment {}", chunks.len(), action)))
+            Ok((
+                std::path::Path::new(&fp)
+                    .file_name()
+                    .unwrap_or_default()
+                    .to_string_lossy()
+                    .to_string(),
+                chunks.len(),
+                format!("{} segment {}", chunks.len(), action),
+            ))
         }));
     }
 
@@ -149,7 +220,13 @@ pub async fn ingest_directory(
         match res {
             Ok(Ok((filename, seg, msg))) => {
                 total_segments += seg;
-                let prefix = if seg > 0 { "✓" } else if msg.contains("redan indexerad") || msg.contains("hoppades") { "⚠" } else { "✗" };
+                let prefix = if seg > 0 {
+                    "✓"
+                } else if msg.contains("redan indexerad") || msg.contains("hoppades") {
+                    "⚠"
+                } else {
+                    "✗"
+                };
                 result_lines.push(format!("  {} {}: {}", prefix, filename, msg));
             }
             Ok(Err(e)) => {
@@ -163,7 +240,9 @@ pub async fn ingest_directory(
 
     let summary = format!(
         "Katalogindexering klar. {} filer · {} segment · samling: '{}'",
-        files.len(), total_segments, args.collection
+        files.len(),
+        total_segments,
+        args.collection
     );
     debug!("{}", summary);
     Ok(summary + "\n" + &result_lines.join("\n"))

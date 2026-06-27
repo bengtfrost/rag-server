@@ -1,12 +1,13 @@
+use clap::Args;
 use serde::Deserialize;
 use std::sync::Arc;
+use std::time::Instant;
 use tokio::sync::Mutex;
 use tracing::debug;
-use std::time::Instant;
 
+use crate::chunker::chunk_text_exact;
 use crate::config::Config;
 use crate::db::Db;
-use crate::chunker::chunk_text_exact;
 use crate::embedder::get_embeddings;
 
 #[derive(Debug, Deserialize)]
@@ -18,6 +19,16 @@ pub struct AddDocumentsArgs {
     pub force: bool,
 }
 
+#[derive(Args)]
+pub struct AddDocumentsCliArgs {
+    #[arg(short, long)]
+    pub collection: String,
+    #[arg(short, long)]
+    pub input: String, // sökväg till JSON-fil med {ids: [...], documents: [...]}
+    #[arg(short, long)]
+    pub force: bool,
+}
+
 pub async fn add_documents(
     db: &Arc<Mutex<Db>>,
     cfg: &Config,
@@ -25,7 +36,9 @@ pub async fn add_documents(
     args: AddDocumentsArgs,
 ) -> anyhow::Result<String> {
     if args.ids.len() != args.documents.len() {
-        return Err(anyhow::anyhow!("Antal ids och dokument stämmer inte överens."));
+        return Err(anyhow::anyhow!(
+            "Antal ids och dokument stämmer inte överens."
+        ));
     }
 
     let db_guard = db.lock().await;
@@ -39,7 +52,7 @@ pub async fn add_documents(
     let t0 = Instant::now();
 
     for (i, (doc_id, doc_text)) in args.ids.iter().zip(args.documents.iter()).enumerate() {
-        debug!("Dokument {}/{}: '{}'", i+1, args.ids.len(), doc_id);
+        debug!("Dokument {}/{}: '{}'", i + 1, args.ids.len(), doc_id);
         let db_guard = db.lock().await;
         let exists = db_guard.doc_exists(&args.collection, doc_id)?;
         drop(db_guard);
@@ -49,7 +62,12 @@ pub async fn add_documents(
             continue;
         }
 
-        let chunks = chunk_text_exact(doc_text, cfg.chunk_size, cfg.chunk_overlap)?;
+        let chunks = chunk_text_exact(
+            doc_text,
+            cfg.chunk_size,
+            cfg.chunk_overlap,
+            &cfg.tokenizer_path,
+        )?;
         if chunks.is_empty() {
             continue;
         }
@@ -59,7 +77,10 @@ pub async fn add_documents(
     if to_insert.is_empty() {
         let mut msg = format!("Inga nya dokument att indexera i '{}'.", args.collection);
         if !skipped.is_empty() {
-            msg.push_str(&format!("\nHoppades över (redan indexerade): {}", skipped.join(", ")));
+            msg.push_str(&format!(
+                "\nHoppades över (redan indexerade): {}",
+                skipped.join(", ")
+            ));
         }
         return Ok(msg);
     }
@@ -92,16 +113,24 @@ pub async fn add_documents(
     }
 
     // Perform batch insert in a single transaction
-    let mut db_guard = db.lock().await;
+    let db_guard = db.lock().await;
     db_guard.replace_chunks_batch(&args.collection, &insert_data)?;
     drop(db_guard);
 
     let elapsed = t0.elapsed();
     let total_chunks: usize = insert_data.iter().map(|(_, chunks, _)| chunks.len()).sum();
 
-    let mut msg = format!("✓ Indexerade {} segment i '{}' på {}.", total_chunks, args.collection, format_duration(elapsed));
+    let mut msg = format!(
+        "✓ Indexerade {} segment i '{}' på {}.",
+        total_chunks,
+        args.collection,
+        format_duration(elapsed)
+    );
     if !skipped.is_empty() {
-        msg.push_str(&format!("\nVarning: Redan indexerade (hoppades över): {}", skipped.join(", ")));
+        msg.push_str(&format!(
+            "\nVarning: Redan indexerade (hoppades över): {}",
+            skipped.join(", ")
+        ));
     }
     Ok(msg)
 }

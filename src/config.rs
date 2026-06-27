@@ -15,6 +15,10 @@ pub struct Config {
     pub embed_batch_size: usize,
     pub rerank_candidates: usize,
     pub timeout_secs: u64,
+    pub embed_model: String,
+    pub rerank_model: String,
+    pub rerank_min_score: f64,
+    pub max_concurrent_files: usize,
 }
 
 impl Config {
@@ -50,6 +54,18 @@ impl Config {
                 .unwrap_or(15),
             timeout_secs: 14400, // 4 timmar som standard för tunga jobb
             base_dir,
+            // 👇 NYA FÄLT – initiera med miljövariabler eller standardvärden
+            embed_model: env::var("RAG_EMBED_MODEL").unwrap_or_else(|_| "bge-m3".to_string()),
+            rerank_model: env::var("RAG_RERANK_MODEL")
+                .unwrap_or_else(|_| "bge-reranker-v2-m3".to_string()),
+            rerank_min_score: env::var("RAG_RERANK_MIN_SCORE")
+                .unwrap_or_else(|_| "0.3".to_string())
+                .parse()
+                .unwrap_or(0.3),
+            max_concurrent_files: env::var("RAG_MAX_CONCURRENT_FILES")
+                .unwrap_or_else(|_| "4".to_string())
+                .parse()
+                .unwrap_or(4),
         })
     }
 }

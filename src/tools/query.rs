@@ -1,19 +1,23 @@
+use clap::Args;
 use serde::Deserialize;
 use std::sync::Arc;
+use std::time::Instant;
 use tokio::sync::Mutex;
 use tracing::debug;
-use std::time::Instant;
 
 use crate::config::Config;
 use crate::db::Db;
 use crate::embedder::get_embeddings;
-use crate::reranker::rerank;
 use crate::expander::expand_query;
+use crate::reranker::rerank;
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Args)]
 pub struct QueryArgs {
+    #[arg(short, long)]
     pub collection: String,
+    #[arg(short, long)]
     pub query: String,
+    #[arg(short, long, default_value = "5")]
     #[serde(default = "default_top_k")]
     pub top_k: usize,
 }
@@ -38,11 +42,17 @@ pub async fn query(
 
     let t0 = Instant::now();
     let query_emb = get_embeddings(client, cfg, &[optimized_query.clone()], "query").await?;
-    let query_emb = query_emb.first().ok_or_else(|| anyhow::anyhow!("No embedding returned"))?;
+    let query_emb = query_emb
+        .first()
+        .ok_or_else(|| anyhow::anyhow!("No embedding returned"))?;
 
     debug!("Hämtar {} ANN-kandidater...", cfg.rerank_candidates);
     let db_guard = db.lock().await;
-    let chunk_ids = db_guard.ann_search(&args.collection, query_emb, cfg.rerank_candidates)?;
+    let chunk_ids: Vec<String> = db_guard
+        .search(&args.collection, query_emb.clone(), cfg.rerank_candidates)?
+        .into_iter()
+        .map(|(id, _, _)| id)
+        .collect();
     drop(db_guard);
 
     if chunk_ids.is_empty() {
@@ -63,14 +73,21 @@ pub async fn query(
     }
 
     let elapsed = t0.elapsed();
-    debug!("Query klar på {}, returnerar {} träffar.", format_duration(elapsed), reranked.len());
+    debug!(
+        "Query klar på {}, returnerar {} träffar.",
+        format_duration(elapsed),
+        reranked.len()
+    );
 
     let mut results = Vec::new();
     for (i, (idx, score)) in reranked.iter().enumerate() {
         if let Some((_id, text, parent)) = doc_map.get(*idx) {
             results.push(format!(
                 "[{}] (Källa: {}) Score: {:.4}\n{}",
-                i+1, parent, score, text
+                i + 1,
+                parent,
+                score,
+                text
             ));
         }
     }

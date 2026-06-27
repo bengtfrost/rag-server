@@ -62,3 +62,13 @@ impl BgeChunker {
         chunks
     }
 }
+
+pub fn chunk_text_exact(
+    text: &str,
+    max_tokens: usize,
+    overlap_tokens: usize,
+    tokenizer_path: &str,
+) -> anyhow::Result<Vec<String>> {
+    let chunker = BgeChunker::new(tokenizer_path)?;
+    Ok(chunker.chunk_text(text, max_tokens, overlap_tokens))
+}

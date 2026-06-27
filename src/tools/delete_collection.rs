@@ -1,10 +1,12 @@
+use crate::db::Db;
+use clap::Args;
 use serde::Deserialize;
 use std::sync::Arc;
 use tokio::sync::Mutex;
-use crate::db::Db;
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Args)]
 pub struct DeleteCollectionArgs {
+    #[arg(short, long)]
     pub name: String,
 }
 
@@ -15,7 +17,10 @@ pub async fn delete_collection(
     let db_guard = db.lock().await;
 
     if !db_guard.collection_exists(&args.name)? {
-        return Err(anyhow::anyhow!("Fel: Samlingen '{}' finns inte.", args.name));
+        return Err(anyhow::anyhow!(
+            "Fel: Samlingen '{}' finns inte.",
+            args.name
+        ));
     }
 
     let (doc_count, chunk_count) = db_guard.get_collection_stats(&args.name)?;
