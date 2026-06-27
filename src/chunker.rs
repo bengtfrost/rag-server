@@ -14,11 +14,27 @@ impl BgeChunker {
 
     pub fn split_sentences(&self, text: &str) -> Vec<String> {
         let text_clean = text.replace('\n', " ");
-        let re = Regex::new(r"(?<=[.!?])\s+(?=[A-ZÅÄÖ])").unwrap();
-        re.split(&text_clean)
-            .map(|s| s.trim().to_string())
-            .filter(|s| s.len() > 2)
-            .collect()
+        let re = Regex::new(r"([.!?])\s+([A-ZÅÄÖ])").unwrap();
+        let mut sentences = Vec::new();
+        let mut start = 0;
+
+        for cap in re.captures_iter(&text_clean) {
+            let end = cap.get(1).unwrap().end();
+            let sentence = text_clean[start..end].trim();
+            if !sentence.is_empty() {
+                sentences.push(sentence.to_string());
+            }
+            start = end;
+        }
+
+        if start < text_clean.len() {
+            let sentence = text_clean[start..].trim();
+            if !sentence.is_empty() {
+                sentences.push(sentence.to_string());
+            }
+        }
+
+        sentences
     }
 
     fn count_tokens(&self, text: &str) -> usize {
@@ -63,6 +79,7 @@ impl BgeChunker {
     }
 }
 
+// Extern wrapper för CLI-användning
 pub fn chunk_text_exact(
     text: &str,
     max_tokens: usize,
