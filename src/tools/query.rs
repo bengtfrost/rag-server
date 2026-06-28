@@ -20,9 +20,15 @@ pub struct QueryArgs {
     #[arg(short, long, default_value = "5")]
     #[serde(default = "default_top_k")]
     pub top_k: usize,
-    // 👇 Ny parameter – valfri URL för reranker
     #[arg(long)]
     pub rerank_url: Option<String>,
+    // 👇 NYA PARAMETRAR FÖR HYBRID SEARCH
+    #[arg(long)]
+    pub hybrid: bool,
+    #[arg(long, default_value = "0.7")]
+    pub vector_weight: f64,
+    #[arg(long, default_value = "0.3")]
+    pub bm25_weight: f64,
 }
 
 fn default_top_k() -> usize {
@@ -51,11 +57,30 @@ pub async fn query(
 
     debug!("Hämtar {} ANN-kandidater...", cfg.rerank_candidates);
     let db_guard = db.lock().await;
-    let chunk_ids: Vec<String> = db_guard
-        .search(&args.collection, query_emb.clone(), cfg.rerank_candidates)?
-        .into_iter()
-        .map(|(id, _, _)| id)
-        .collect();
+
+    // Bestäm sökmetod baserat på hybrid-flagga
+    let chunk_ids: Vec<String> = if args.hybrid {
+        debug!(
+            "Använder hybrid search (BM25 + vector) med vikter {} / {}",
+            args.vector_weight, args.bm25_weight
+        );
+        let results = db_guard.hybrid_search(
+            &args.collection,
+            query_emb.clone(),
+            &optimized_query,
+            cfg.rerank_candidates * 2, // fler kandidater för hybrid
+            args.vector_weight,
+            args.bm25_weight,
+        )?;
+        results.iter().map(|(id, _, _)| id.clone()).collect()
+    } else {
+        // Vanlig semantisk sökning
+        db_guard
+            .search(&args.collection, query_emb.clone(), cfg.rerank_candidates)?
+            .into_iter()
+            .map(|(id, _, _)| id)
+            .collect()
+    };
     drop(db_guard);
 
     if chunk_ids.is_empty() {

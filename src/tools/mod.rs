@@ -6,7 +6,6 @@ use tokio::sync::Mutex;
 use crate::config::Config;
 use crate::db::Db;
 
-// Deklarera alla undermoduler som PUBLIKA
 pub mod add_documents;
 pub mod create_collection;
 pub mod delete_collection;
@@ -16,7 +15,6 @@ pub mod ingest_file;
 pub mod list_collections;
 pub mod query;
 
-// Re-exportera Args-strukturer för att användas i main.rs
 pub use add_documents::AddDocumentsArgs;
 pub use create_collection::CreateCollectionArgs;
 pub use delete_collection::DeleteCollectionArgs;
@@ -84,13 +82,17 @@ pub fn list_tools() -> Vec<serde_json::Value> {
         ),
         tool_descriptor(
             "query",
-            "Sök i samlingen med semantisk sökning, automatisk sökexpansion (middleware) och reranking",
+            "Sök i samlingen med semantisk sökning, automatisk sökexpansion och reranking",
             json!({
                 "type": "object",
                 "properties": {
                     "collection": {"type": "string"},
                     "query": {"type": "string"},
-                    "top_k": {"type": "integer"}
+                    "top_k": {"type": "integer", "default": 5},
+                    "rerank_url": {"type": "string", "description": "Valfri reranker-URL"},
+                    "hybrid": {"type": "boolean", "description": "Använd hybrid search (BM25 + vector)", "default": false},
+                    "vector_weight": {"type": "number", "description": "Vikt för vektorscore (0-1)", "default": 0.7},
+                    "bm25_weight": {"type": "number", "description": "Vikt för BM25-score (0-1)", "default": 0.3}
                 },
                 "required": ["collection", "query"]
             }),
@@ -177,7 +179,7 @@ pub async fn call_tool(
         "query" => {
             let args: query::QueryArgs = serde_json::from_value(args)
                 .map_err(|e| anyhow::anyhow!(
-                    "Invalid arguments for 'query'. Expected fields: collection, query (optional: top_k). Error: {}", e
+                    "Invalid arguments for 'query'. Expected fields: collection, query (optional: top_k, rerank_url, hybrid, vector_weight, bm25_weight). Error: {}", e
                 ))?;
             query::query(db, cfg, client, args).await
         }

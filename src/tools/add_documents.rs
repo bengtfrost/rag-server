@@ -113,7 +113,7 @@ pub async fn add_documents(
     }
 
     // Perform batch insert in a single transaction
-    let db_guard = db.lock().await;
+    let mut db_guard = db.lock().await;
     db_guard.replace_chunks_batch(&args.collection, &insert_data)?;
     drop(db_guard);
 

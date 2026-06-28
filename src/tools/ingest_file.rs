@@ -85,7 +85,7 @@ pub async fn ingest_file(
     }
 
     let embeddings = get_embeddings(client, cfg, &chunks, &doc_id).await?;
-    let db_guard = db.lock().await;
+    let mut db_guard = db.lock().await;
     db_guard.insert_chunks(
         &args.collection,
         &doc_id,

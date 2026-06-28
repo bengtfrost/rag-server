@@ -196,7 +196,7 @@ pub async fn ingest_directory(
             drop(db_guard);
 
             let embeddings = get_embeddings(&client, &cfg, &chunks, &doc_id).await?;
-            let db_guard = db.lock().await;
+            let mut db_guard = db.lock().await;
             db_guard.insert_chunks(&collection, &doc_id, chunks.clone(), embeddings.clone())?;
             drop(db_guard);
 
