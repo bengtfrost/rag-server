@@ -171,6 +171,28 @@ The same binary now also acts as a full‑featured command‑line tool. Run it w
 
 # Delete an entire collection
 ./target/release/rag-server delete-collection --name juridik
+
+# Grundläggande sökning (använder RAG_RERANK_URL)
+./rag-server query --collection juridik --query "vad är regeringsformen?"
+
+# Specificera reranker per anrop
+./rag-server query --collection juridik --query "vad är regeringsformen?" --rerank-url http://127.0.0.1:11437/rerank
+
+# MCP Tools – query schema:
+{
+  "name": "query",
+  "description": "Sök i samlingen med semantisk sökning och reranking",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "collection": {"type": "string"},
+      "query": {"type": "string"},
+      "top_k": {"type": "integer", "default": 5},
+      "rerank_url": {"type": "string", "description": "Valfri reranker-URL"}
+    },
+    "required": ["collection", "query"]
+  }
+}
 ```
 
 ---

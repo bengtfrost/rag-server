@@ -20,6 +20,9 @@ pub struct QueryArgs {
     #[arg(short, long, default_value = "5")]
     #[serde(default = "default_top_k")]
     pub top_k: usize,
+    // 👇 Ny parameter – valfri URL för reranker
+    #[arg(long)]
+    pub rerank_url: Option<String>,
 }
 
 fn default_top_k() -> usize {
@@ -66,7 +69,18 @@ pub async fn query(
 
     let doc_texts: Vec<String> = doc_map.iter().map(|(_, text, _)| text.clone()).collect();
 
-    let reranked = rerank(client, cfg, &optimized_query, &doc_texts, args.top_k).await?;
+    // Använd angiven rerank_url eller fallback till cfg.rerank_url
+    let rerank_url = args.rerank_url.as_deref().unwrap_or(&cfg.rerank_url);
+
+    let reranked = rerank(
+        client,
+        rerank_url,
+        cfg,
+        &optimized_query,
+        &doc_texts,
+        args.top_k,
+    )
+    .await?;
 
     if reranked.is_empty() {
         return Ok("Inga tillräckligt relevanta träffar.".to_string());
