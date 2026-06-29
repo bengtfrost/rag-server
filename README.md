@@ -11,6 +11,7 @@ By bypassing the "PCIe dinosaur" and utilizing **Unified Memory Architecture (UM
 ## ✨ Key Milestones in v2.3 (The "Hybrid" Update)
 
 - **🔍 Hybrid Search:** Combines **semantic vector search** (BGE-M3) with **BM25 keyword search** (SQLite FTS5). Configurable weights allow fine-tuning for legal, technical, or general text domains.
+- **🗣️ Query Expansion:** Automatically expands broad queries using a local LLM (llama-server on port 11434) to generate synonyms and related terms, improving retrieval recall.
 - **🎯 Per-Query Reranker Selection:** Choose reranker model per query with `--rerank-url`. Seamlessly switch between **BGE-Reranker-v2-M3** (Swedish-optimized) and **Mxbai-Reranker-Large-v2** (English-optimized).
 - **⚡ Full CLI with `--help`:** All tools available as subcommands with native help support via `clap`. Works equally well as an MCP stdio server or standalone CLI.
 - **🧠 Exact BGE-M3 Tokenization:** Integrated Hugging Face `tokenizers` crate for 1:1 parity with XLM-RoBERTa BPE standard.
@@ -26,12 +27,20 @@ The server communicates directly with local Vulkan-accelerated engines over nati
 ```mermaid
 graph TD
     A[Goose / Aider / CLI] -->|STDIO| B(Rust RAG Server)
-    B -->|Local Port 11435| C(BGE-M3 iGPU)
-    B -->|Local Port 11436/11437| D(Reranker iGPU)
-    B -->|Dynamic Loading| E[vec0.so Extension]
-    E <--> F[(SQLite-Vec DB)]
-    B -->|FTS5| G[(BM25 Index)]
+    B -->|Query Expansion| C[LLM Server :11434]
+    B -->|Embeddings| D[BGE-M3 :11435]
+    B -->|Reranking| E[Reranker :11436/11437]
+    B -->|Dynamic Loading| F[vec0.so Extension]
+    F <--> G[(SQLite-Vec DB)]
+    B -->|FTS5| H[(BM25 Index)]
 ```
+
+**Explanation:**
+
+- **LLM Server (port 11434):** Used for query expansion – generating synonyms and related terms to improve recall on broad queries.
+- **BGE-M3 (port 11435):** Generates high-quality multilingual embeddings for semantic search.
+- **Reranker (port 11436/11437):** Cross-encoder models for precision reranking (BGE for Swedish, Mxbai for English).
+- **SQLite-Vec + FTS5:** Vector search + BM25 keyword search in the same database.
 
 ---
 
@@ -82,21 +91,22 @@ sqlite3 ~/.config/rag-server/vectors.db "INSERT OR IGNORE INTO docs_fts(rowid, i
 
 The server defaults to optimized values for a 16GB U-series workstation but can be overridden via environment variables in your `~/.zshrc`.
 
-| Variable                   | Default Value                             | Description                             |
-| :------------------------- | :---------------------------------------- | :-------------------------------------- |
-| `SQLITE_VEC_PATH`          | `~/.config/rag-server/extensions/vec0.so` | Path to the vector extension.           |
-| `RAG_DB_PATH`              | `~/.config/rag-server/vectors.db`         | Path to the local Knowledge Base.       |
-| `RAG_TOKENIZER_PATH`       | `~/.config/rag-server/tokenizer.json`     | BGE-M3 BPE dictionary.                  |
-| `RAG_EMBED_URL`            | `http://localhost:11435/v1/embeddings`    | Vulkan Embedding server.                |
-| `RAG_RERANK_URL`           | `http://localhost:11436/rerank`           | Vulkan Reranker server (primary).       |
-| `RAG_CHUNK_SIZE`           | `1024` (Legal) / `3000` (Code)            | Max tokens per segment.                 |
-| `RAG_CHUNK_OVERLAP`        | `150` (Legal) / `400` (Code)              | Token overlap for context.              |
-| `RAG_EMBED_MODEL`          | `bge-m3`                                  | Model name sent to the embedder.        |
-| `RAG_RERANK_MODEL`         | `bge-reranker-v2-m3`                      | Model name sent to the reranker.        |
-| `RAG_RERANK_MIN_SCORE`     | `0.3`                                     | Minimum relevance score to keep.        |
-| `RAG_MAX_CONCURRENT_FILES` | `4`                                       | Parallelism when ingesting directories. |
-| `RAG_BATCH_SIZE`           | `8`                                       | Embedding batch size for API requests.  |
-| `RAG_RERANK_CANDIDATES`    | `10`                                      | Number of candidates for reranking.     |
+| Variable                   | Default Value                                | Description                               |
+| :------------------------- | :------------------------------------------- | :---------------------------------------- |
+| `SQLITE_VEC_PATH`          | `~/.config/rag-server/extensions/vec0.so`    | Path to the vector extension.             |
+| `RAG_DB_PATH`              | `~/.config/rag-server/vectors.db`            | Path to the local Knowledge Base.         |
+| `RAG_TOKENIZER_PATH`       | `~/.config/rag-server/tokenizer.json`        | BGE-M3 BPE dictionary.                    |
+| `RAG_EMBED_URL`            | `http://localhost:11435/v1/embeddings`       | Vulkan Embedding server.                  |
+| `RAG_RERANK_URL`           | `http://localhost:11436/rerank`              | Vulkan Reranker server (primary).         |
+| `RAG_LLM_URL`              | `http://localhost:11434/v1/chat/completions` | Local LLM for query expansion (optional). |
+| `RAG_CHUNK_SIZE`           | `1024` (Legal) / `3000` (Code)               | Max tokens per segment.                   |
+| `RAG_CHUNK_OVERLAP`        | `150` (Legal) / `400` (Code)                 | Token overlap for context.                |
+| `RAG_EMBED_MODEL`          | `bge-m3`                                     | Model name sent to the embedder.          |
+| `RAG_RERANK_MODEL`         | `bge-reranker-v2-m3`                         | Model name sent to the reranker.          |
+| `RAG_RERANK_MIN_SCORE`     | `0.3`                                        | Minimum relevance score to keep.          |
+| `RAG_MAX_CONCURRENT_FILES` | `4`                                          | Parallelism when ingesting directories.   |
+| `RAG_BATCH_SIZE`           | `8`                                          | Embedding batch size for API requests.    |
+| `RAG_RERANK_CANDIDATES`    | `10`                                         | Number of candidates for reranking.       |
 
 ---
 
@@ -114,6 +124,7 @@ extensions:
     env:
       SQLITE_VEC_PATH: /home/bfrost/.config/rag-server/extensions/vec0.so
       RAG_RERANK_URL: http://127.0.0.1:11436/rerank
+      RAG_LLM_URL: http://127.0.0.1:11434/v1/chat/completions
     timeout: 7200
 ```
 
