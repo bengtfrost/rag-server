@@ -139,6 +139,29 @@ alias goose-local='_goose_session local-llama-server local-llama-server-embed lo
 # English stack (Mxbai-Reranker-Large-v2 on port 11437)
 alias goose-local-en='_goose_session local-llama-server local-llama-server-embed local-llama-server-rerank-2'
 
+# Hjälpfunktion för att säkra Agentgateway med tvingad miljöarv
+_ensure_agentgateway() {
+    # Kontrollera om port 4000 redan är öppen
+    if ! ss -tulpn | grep -q ":4000 "; then
+        echo "🚀 Starting Agentgateway..."
+        
+        # Vi använder 'nohup' och '&' för att köra den stabilt i bakgrunden
+        # Vi förutsätter att variablerna redan är exporterade via .zshenv
+        agentgateway -f ~/.config/agentgateway/config.yaml > /dev/null 2>&1 &
+        
+        # Vänta på att porten ska öppnas
+        local count=0
+        while ! ss -tulpn | grep -q ":4000 "; do
+            if [ $count -gt 10 ]; then
+                echo "❌ Fel: Agentgateway hann inte starta."
+                return 1
+            fi
+            sleep 1
+            ((count++))
+        done
+    fi
+}
+
 _goose_session() {
     local model="${1:-local-llama-server}"
     local embed="${2:-local-llama-server-embed}"
