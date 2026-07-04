@@ -22,3 +22,5 @@ clap = { version = "4", features = ["derive"] }
 # Optimizations
 rayon = "1.10"
 lazy_static = "1.5"
+dashmap = "6.1"
+once_cell = "1.19"

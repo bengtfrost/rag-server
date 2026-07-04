@@ -1,27 +1,27 @@
-use serde_json::{json, Value};
+use anyhow::Result;
+use serde_json::{Value, json};
 use std::sync::Arc;
 use tokio::sync::Mutex;
-use anyhow::Result;
 
 use crate::config::Config;
 use crate::db::Db;
 
-pub mod create_collection;
-pub mod ingest_file;
-pub mod ingest_directory;
 pub mod add_documents;
-pub mod query;
-pub mod list_collections;
-pub mod delete_documents;
+pub mod create_collection;
 pub mod delete_collection;
+pub mod delete_documents;
+pub mod ingest_directory;
+pub mod ingest_file;
+pub mod list_collections;
+pub mod query;
 
 pub use create_collection::CreateCollectionArgs;
-pub use ingest_file::IngestFileArgs;
 pub use ingest_directory::IngestDirectoryArgs;
+pub use ingest_file::IngestFileArgs;
 // pub use add_documents::AddDocumentsArgs; // Commented if unused
-pub use query::QueryArgs;
-pub use delete_documents::DeleteDocumentsArgs;
 pub use delete_collection::DeleteCollectionArgs;
+pub use delete_documents::DeleteDocumentsArgs;
+pub use query::QueryArgs;
 
 pub fn list_tools() -> Vec<serde_json::Value> {
     vec![
@@ -129,13 +129,17 @@ pub fn list_tools() -> Vec<serde_json::Value> {
         ),
         tool_descriptor(
             "clear_cache",
-            "Rensa frågecachen",
+            "Rensa frågecachen (TTL-baserad cache med LRU-eviction)",
             json!({ "type": "object", "properties": {} }),
         ),
     ]
 }
 
-fn tool_descriptor(name: &str, description: &str, input_schema: serde_json::Value) -> serde_json::Value {
+fn tool_descriptor(
+    name: &str,
+    description: &str,
+    input_schema: serde_json::Value,
+) -> serde_json::Value {
     json!({
         "name": name,
         "description": description,
@@ -176,9 +180,7 @@ pub async fn call_tool(
                 .map_err(|e| anyhow::anyhow!("Invalid arguments for 'query'. Expected fields: collection, query (optional: top_k, rerank_url, hybrid, vector_weight, bm25_weight, no_cache). Error: {}", e))?;
             query::query(db, cfg, client, args).await
         }
-        "list_collections" => {
-            list_collections::list_collections(db).await
-        }
+        "list_collections" => list_collections::list_collections(db).await,
         "delete_documents" => {
             let args: delete_documents::DeleteDocumentsArgs = serde_json::from_value(args)
                 .map_err(|e| anyhow::anyhow!("Invalid arguments for 'delete_documents'. Expected fields: collection, ids (array). Error: {}", e))?;
@@ -190,10 +192,10 @@ pub async fn call_tool(
             delete_collection::delete_collection(db, args).await
         }
         "clear_cache" => {
-            let mut cache = crate::cache::QUERY_CACHE.lock().await;
-            cache.clear();
-            Ok("✓ Cache rensad.".to_string())
+            crate::cache::QUERY_CACHE.clear();
+            Ok("✓ Cache rensad. Alla cachelagrade frågor har tagits bort.".to_string())
         }
         _ => Err(anyhow::anyhow!("Unknown tool: {}", name)),
     }
 }
+

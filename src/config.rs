@@ -19,6 +19,7 @@ pub struct Config {
     pub max_concurrent_files: usize,
     pub max_concurrent_requests: Option<usize>,
     pub rerank_min_candidates: Option<usize>,
+    // cache_ttl_secs borttagen – används inte
 }
 
 impl Config {

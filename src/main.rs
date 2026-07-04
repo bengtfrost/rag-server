@@ -1,16 +1,16 @@
+mod cache;
 mod chunker;
 mod config;
 mod db;
 mod embedder;
 mod expander;
 mod extractor;
+mod pipeline;
 mod reranker;
 mod tools;
-mod cache;
-mod pipeline;
 
 use clap::{Parser, Subcommand};
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::io::{self, BufRead};
 use std::sync::Arc;
 use std::time::Duration;
@@ -196,10 +196,10 @@ async fn run_cli(command: Commands) -> anyhow::Result<()> {
             println!("{}", result);
         }
         Commands::ClearCache => {
-            let mut cache = cache::QUERY_CACHE.lock().await;
-            cache.clear();
+            cache::QUERY_CACHE.clear();
             println!("✓ Cache rensad.");
         }
     }
     Ok(())
 }
+

@@ -365,6 +365,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "dashmap"
+version = "6.2.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e6361d5c062261c78a176addb82d4c821ae42bed6089de0e12603cd25de2059c"
+dependencies = [
+ "cfg-if",
+ "crossbeam-utils",
+ "hashbrown 0.14.5",
+ "lock_api",
+ "once_cell",
+ "parking_lot_core",
+]
+
+[[package]]
 name = "derive_builder"
 version = "0.20.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1524,9 +1538,11 @@ version = "2.3.0"
 dependencies = [
  "anyhow",
  "clap",
+ "dashmap",
  "dirs",
  "futures",
  "lazy_static",
+ "once_cell",
  "pdf-extract",
  "rayon",
  "regex",

@@ -29,7 +29,6 @@ pub struct QueryArgs {
     pub vector_weight: f64,
     #[arg(long, default_value = "0.3")]
     pub bm25_weight: f64,
-    // NEW: skip cache
     #[arg(long)]
     pub no_cache: bool,
 }
@@ -60,7 +59,7 @@ pub async fn query(
 
     debug!("Hämtar {} ANN-kandidater...", cfg.rerank_candidates);
 
-    // Check cache for hybrid search results (unless no_cache)
+    // Build cache key
     let cache_key = format!(
         "{}:{}:{}:{}:{}:{}",
         args.collection,
@@ -72,14 +71,14 @@ pub async fn query(
     );
 
     let chunk_ids: Vec<String> = if !args.no_cache {
-        let mut cache = QUERY_CACHE.lock().await;
-        if let Some(cached) = cache.get(&cache_key) {
+        // Try cache first
+        if let Some(cached) = QUERY_CACHE.get(&cache_key) {
             debug!("Cache hit for query");
-            cached
+            cached.as_ref().clone()
         } else {
             // Run search and cache
             let results = run_search(db, cfg, &args, query_emb, &optimized_query).await?;
-            cache.insert(cache_key, results.clone());
+            QUERY_CACHE.insert(cache_key, results.clone());
             results
         }
     } else {
@@ -146,21 +145,17 @@ async fn run_search(
     let db_guard = db.lock().await;
 
     let chunk_ids: Vec<String> = if args.hybrid {
-        debug!(
-            "Använder hybrid search (BM25 + vector) med vikter {} / {}",
-            args.vector_weight, args.bm25_weight
-        );
-        // Use async parallel hybrid search
-        let results = db_guard
-            .hybrid_search_async(
-                &args.collection,
-                query_emb.clone(),
-                optimized_query,
-                cfg.rerank_candidates * 2,
-                args.vector_weight,
-                args.bm25_weight,
-            )
-            .await?;
+        debug!("Använder hybrid search (BM25 + vector) med vikter {} / {}", 
+               args.vector_weight, args.bm25_weight);
+        // Använd den asynkrona versionen av hybrid_search
+        let results = db_guard.hybrid_search_async(
+            &args.collection,
+            query_emb.clone(),
+            optimized_query,
+            cfg.rerank_candidates * 2,
+            args.vector_weight,
+            args.bm25_weight,
+        ).await?;
         results.iter().map(|(id, _, _)| id.clone()).collect()
     } else {
         db_guard
@@ -182,4 +177,3 @@ fn format_duration(d: std::time::Duration) -> String {
         format!("{}m {}s", secs / 60, secs % 60)
     }
 }
-

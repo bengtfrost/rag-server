@@ -9,7 +9,13 @@ pub struct Db {
 
 impl Db {
     pub fn new(path: &str) -> Result<Self> {
-        let conn = Connection::open(path)?;
+        // Open with connection pooling settings
+        let conn = Connection::open_with_flags(
+            path,
+            rusqlite::OpenFlags::SQLITE_OPEN_READ_WRITE
+                | rusqlite::OpenFlags::SQLITE_OPEN_CREATE
+                | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX, // Enable multi-threading
+        )?;
 
         let ext_path = env::var("SQLITE_VEC_PATH").unwrap_or_else(|_| "vec0".to_string());
 
