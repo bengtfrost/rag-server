@@ -1,6 +1,6 @@
 [package]
 name = "rag-server"
-version = "2.1.0"
+version = "2.3.0"
 edition = "2024"
 
 [dependencies]
@@ -8,7 +8,7 @@ tokio = { version = "1", features = ["full"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 rusqlite = { version = "0.32", features = ["bundled", "load_extension"] }
-reqwest = { version = "0.12", features = ["json"] }
+reqwest = { version = "0.12", features = ["json", "stream"] }
 tokenizers = "0.21.0"
 anyhow = "1"
 regex = "1"
@@ -18,3 +18,7 @@ futures = "0.3"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 clap = { version = "4", features = ["derive"] }
+
+# Optimizations
+rayon = "1.10"
+lazy_static = "1.5"

@@ -1,11 +1,11 @@
-use crate::config::Config;
 use reqwest::Client;
 use serde_json::json;
 use tracing::debug;
+use crate::config::Config;
 
 pub async fn rerank(
     client: &Client,
-    rerank_url: &str, // ← explicit URL
+    rerank_url: &str,
     cfg: &Config,
     query: &str,
     documents: &[String],
@@ -15,10 +15,18 @@ pub async fn rerank(
         return Ok(Vec::new());
     }
 
-    debug!(
-        "Reranking {} candidates via Agentgateway...",
-        documents.len()
-    );
+    // Adaptive reranking: skip if few candidates
+    let min_candidates = cfg.rerank_min_candidates.unwrap_or(3);
+    if documents.len() <= min_candidates {
+        debug!("Skipping reranking: only {} candidates", documents.len());
+        return Ok(documents
+            .iter()
+            .enumerate()
+            .map(|(i, _)| (i, 1.0))
+            .collect());
+    }
+
+    debug!("Reranking {} candidates via Agentgateway...", documents.len());
 
     let payload = json!({
         "model": cfg.rerank_model,
@@ -27,7 +35,7 @@ pub async fn rerank(
     });
 
     let resp = client
-        .post(rerank_url) // ← använd den angivna URL:en
+        .post(rerank_url)
         .json(&payload)
         .timeout(std::time::Duration::from_secs(cfg.timeout_secs))
         .send()
@@ -63,4 +71,3 @@ pub async fn rerank(
     );
     Ok(filtered)
 }
-

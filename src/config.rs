@@ -4,8 +4,6 @@ use std::path::PathBuf;
 
 #[derive(Debug, Clone)]
 pub struct Config {
-    #[allow(dead_code)]
-    pub base_dir: PathBuf,
     pub db_path: String,
     pub tokenizer_path: String,
     pub embed_url: String,
@@ -19,6 +17,8 @@ pub struct Config {
     pub rerank_model: String,
     pub rerank_min_score: f64,
     pub max_concurrent_files: usize,
+    pub max_concurrent_requests: Option<usize>,
+    pub rerank_min_candidates: Option<usize>,
 }
 
 impl Config {
@@ -52,10 +52,9 @@ impl Config {
                 .unwrap_or_else(|_| "15".to_string())
                 .parse()
                 .unwrap_or(15),
-            timeout_secs: 14400, // 4 timmar som standard för tunga jobb
-            base_dir,
-            // 👇 NYA FÄLT – initiera med miljövariabler eller standardvärden
-            embed_model: env::var("RAG_EMBED_MODEL").unwrap_or_else(|_| "bge-m3".to_string()),
+            timeout_secs: 14400,
+            embed_model: env::var("RAG_EMBED_MODEL")
+                .unwrap_or_else(|_| "bge-m3".to_string()),
             rerank_model: env::var("RAG_RERANK_MODEL")
                 .unwrap_or_else(|_| "bge-reranker-v2-m3".to_string()),
             rerank_min_score: env::var("RAG_RERANK_MIN_SCORE")
@@ -66,6 +65,12 @@ impl Config {
                 .unwrap_or_else(|_| "4".to_string())
                 .parse()
                 .unwrap_or(4),
+            max_concurrent_requests: env::var("RAG_MAX_CONCURRENT_REQUESTS")
+                .ok()
+                .and_then(|s| s.parse().ok()),
+            rerank_min_candidates: env::var("RAG_RERANK_MIN_CANDIDATES")
+                .ok()
+                .and_then(|s| s.parse().ok()),
         })
     }
 }

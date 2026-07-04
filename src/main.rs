@@ -5,10 +5,12 @@ mod embedder;
 mod expander;
 mod extractor;
 mod reranker;
-pub mod tools;
+mod tools;
+mod cache;
+mod pipeline;
 
 use clap::{Parser, Subcommand};
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 use std::io::{self, BufRead};
 use std::sync::Arc;
 use std::time::Duration;
@@ -16,13 +18,13 @@ use tokio::sync::Mutex;
 
 use crate::config::Config;
 use crate::db::Db;
-use crate::tools::*; // importerar list_tools, call_tool och alla *Args-strukturer
+use crate::tools::*;
 
 // CLI-struktur
 #[derive(Parser)]
 #[command(name = "rag-server")]
 #[command(about = "Sovereign Rust RAG Server med lokal embedding och reranking")]
-#[command(version = "2.1.0")]
+#[command(version = "2.3.0")]
 struct Cli {
     #[command(subcommand)]
     command: Option<Commands>,
@@ -31,25 +33,28 @@ struct Cli {
 #[derive(Subcommand)]
 enum Commands {
     #[command(about = "Skapa en ny samling")]
-    CreateCollection(CreateCollectionArgs), // ← utan create_collection::
+    CreateCollection(CreateCollectionArgs),
 
     #[command(about = "Indexera en enskild fil")]
-    IngestFile(IngestFileArgs), // ← utan ingest_file::
+    IngestFile(IngestFileArgs),
 
     #[command(about = "Indexera alla filer i en katalog")]
-    IngestDirectory(IngestDirectoryArgs), // ← utan ingest_directory::
+    IngestDirectory(IngestDirectoryArgs),
 
     #[command(about = "Sök i en samling")]
-    Query(QueryArgs), // ← utan query::
+    Query(QueryArgs),
 
     #[command(about = "Lista alla samlingar")]
     ListCollections,
 
     #[command(about = "Ta bort dokument från en samling")]
-    DeleteDocuments(DeleteDocumentsArgs), // ← utan delete_documents::
+    DeleteDocuments(DeleteDocumentsArgs),
 
     #[command(about = "Ta bort en hel samling")]
-    DeleteCollection(DeleteCollectionArgs), // ← utan delete_collection::
+    DeleteCollection(DeleteCollectionArgs),
+
+    #[command(about = "Rensa cache")]
+    ClearCache,
 }
 
 #[tokio::main]
@@ -64,12 +69,15 @@ async fn main() -> anyhow::Result<()> {
     Ok(())
 }
 
-// Serverläge (originalfunktionen, men använder nu tools-modulen)
 async fn run_server() -> anyhow::Result<()> {
     let cfg = Config::from_env()?;
     let db = Arc::new(Mutex::new(Db::new(&cfg.db_path)?));
+
+    // Improved client with connection pooling
     let client = reqwest::Client::builder()
         .timeout(Duration::from_secs(cfg.timeout_secs))
+        .pool_max_idle_per_host(10)
+        .pool_idle_timeout(Duration::from_secs(30))
         .build()?;
 
     eprintln!("[*] Sovereign Rust RAG Server startad...");
@@ -95,7 +103,7 @@ async fn run_server() -> anyhow::Result<()> {
                         "capabilities": { "tools": {} },
                         "serverInfo": {
                             "name": "sovereign-rag-rust",
-                            "version": "2.1.2"
+                            "version": "2.3.0"
                         }
                     }
                 });
@@ -105,7 +113,6 @@ async fn run_server() -> anyhow::Result<()> {
                 eprintln!("[*] Goose ansluten till Rust RAG.");
             }
             "tools/list" => {
-                // Använd list_tools() från tools-modulen
                 let resp = json!({
                     "jsonrpc": "2.0",
                     "id": id,
@@ -120,7 +127,6 @@ async fn run_server() -> anyhow::Result<()> {
                 let args = &req["params"]["arguments"];
                 eprintln!("[*] Goose anropar verktyg: {}", tool_name);
 
-                // Använd call_tool() från tools-modulen
                 match call_tool(tool_name, args.clone(), &cfg, &db, &client).await {
                     Ok(result_text) => {
                         let resp = json!({
@@ -145,20 +151,19 @@ async fn run_server() -> anyhow::Result<()> {
                     }
                 }
             }
-            _ => {
-                // Hantera okända metoder (ignorera)
-            }
+            _ => {}
         }
     }
     Ok(())
 }
 
-// CLI-läge
 async fn run_cli(command: Commands) -> anyhow::Result<()> {
     let cfg = Config::from_env()?;
     let db = Arc::new(Mutex::new(Db::new(&cfg.db_path)?));
     let client = reqwest::Client::builder()
         .timeout(Duration::from_secs(cfg.timeout_secs))
+        .pool_max_idle_per_host(10)
+        .pool_idle_timeout(Duration::from_secs(30))
         .build()?;
 
     match command {
@@ -189,6 +194,11 @@ async fn run_cli(command: Commands) -> anyhow::Result<()> {
         Commands::DeleteCollection(args) => {
             let result = delete_collection::delete_collection(&db, args).await?;
             println!("{}", result);
+        }
+        Commands::ClearCache => {
+            let mut cache = cache::QUERY_CACHE.lock().await;
+            cache.clear();
+            println!("✓ Cache rensad.");
         }
     }
     Ok(())

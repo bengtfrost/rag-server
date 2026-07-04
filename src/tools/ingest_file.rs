@@ -10,6 +10,7 @@ use crate::config::Config;
 use crate::db::Db;
 use crate::embedder::get_embeddings;
 use crate::extractor::extract_text_from_file;
+use crate::pipeline::IngestionPipeline;
 
 #[derive(Debug, Deserialize, Args)]
 pub struct IngestFileArgs {
@@ -26,6 +27,10 @@ pub struct IngestFileArgs {
     #[arg(short, long)]
     #[serde(default)]
     pub force: bool,
+    // NEW: use pipeline optimization
+    #[arg(long)]
+    #[serde(default)]
+    pub pipeline: bool,
 }
 
 fn default_encoding() -> String {
@@ -43,7 +48,6 @@ pub async fn ingest_file(
         return Err(anyhow::anyhow!("Fil hittades inte: {}", file_path));
     }
 
-    // Use absolute path as fallback to avoid collisions
     let doc_id = args.document_id.clone().unwrap_or_else(|| {
         let abs_path = std::path::absolute(file_path)
             .unwrap_or_else(|_| std::path::Path::new(file_path).to_path_buf());
@@ -74,17 +78,35 @@ pub async fn ingest_file(
     drop(db_guard);
 
     let t0 = Instant::now();
-    let chunks = chunk_text_exact(
-        &text, // ← rätt
-        cfg.chunk_size,
-        cfg.chunk_overlap,
-        &cfg.tokenizer_path,
-    )?;
+
+    let (chunks, embeddings) = if args.pipeline {
+        // Use optimized pipeline
+        debug!("Using pipeline optimization for ingestion");
+        let pipeline = IngestionPipeline::new(cfg, client.clone())?;
+        let chunks = pipeline
+            .process(&text, &args.collection, &doc_id, args.force)
+            .await?;
+        let embeddings = get_embeddings(client, cfg, &chunks, &doc_id).await?;
+        (chunks, embeddings)
+    } else {
+        // Traditional method
+        let chunks = chunk_text_exact(
+            &text,
+            cfg.chunk_size,
+            cfg.chunk_overlap,
+            &cfg.tokenizer_path,
+        )?;
+        if chunks.is_empty() {
+            return Ok("Ingen text att indexera.".to_string());
+        }
+        let embeddings = get_embeddings(client, cfg, &chunks, &doc_id).await?;
+        (chunks, embeddings)
+    };
+
     if chunks.is_empty() {
         return Ok("Ingen text att indexera.".to_string());
     }
 
-    let embeddings = get_embeddings(client, cfg, &chunks, &doc_id).await?;
     let mut db_guard = db.lock().await;
     db_guard.insert_chunks(
         &args.collection,
@@ -100,6 +122,7 @@ pub async fn ingest_file(
     } else {
         "Indexerade"
     };
+
     Ok(format!(
         "✓ Klar! {} {} segment från '{}' (doc_id='{}') i '{}' på {}.",
         action,
@@ -122,3 +145,4 @@ fn format_duration(d: std::time::Duration) -> String {
         format!("{}m {}s", secs / 60, secs % 60)
     }
 }
+
