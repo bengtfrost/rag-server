@@ -93,7 +93,51 @@ sqlite3 ~/.config/rag-server/vectors.db "INSERT OR IGNORE INTO docs_fts(rowid, i
 
 ## ⚙️ Configuration
 
-The server defaults to optimized values for a 16GB U-series workstation but can be overridden via environment variables in your `~/.zshrc`.
+The server defaults to optimized values for a 16GB U-series workstation but can be overridden via environment variables.
+
+### Environment Setup (Recommended)
+
+Create a dedicated environment file for your RAG configuration:
+
+```bash
+# ~/.config/rag-server/env
+# RAG Server Environment Variables
+
+# Embedding model
+export RAG_EMBED_MODEL="local-llama-server-embed"
+
+# Reranker model (primary or secondary)
+export RAG_RERANK_MODEL="local-llama-server-rerank"
+
+# Reranker URL (derived from RAG_RERANK_MODEL)
+case "$RAG_RERANK_MODEL" in
+    local-llama-server-rerank)
+        export RAG_RERANK_URL="http://127.0.0.1:11436/rerank"
+        ;;
+    local-llama-server-rerank-2)
+        export RAG_RERANK_URL="http://127.0.0.1:11437/rerank"
+        ;;
+    *)
+        export RAG_RERANK_URL="http://127.0.0.1:11436/rerank"  # Fallback
+        ;;
+esac
+
+# Reranking settings
+export RAG_RERANK_CANDIDATES=10
+export RAG_RERANK_MIN_CANDIDATES=3
+
+# Concurrency settings
+export RAG_MAX_CONCURRENT=4
+export RAG_MAX_CONCURRENT_REQUESTS=4
+
+# Caching
+export RAG_CACHE_TTL=300
+
+# Database path
+export RAG_DB_PATH="$HOME/.config/rag-server/vectors.db"
+```
+
+### Environment Variables Reference
 
 | Variable                      | Default Value                                | Description                                    |
 | :---------------------------- | :------------------------------------------- | :--------------------------------------------- |
@@ -111,14 +155,29 @@ The server defaults to optimized values for a 16GB U-series workstation but can 
 | `RAG_MAX_CONCURRENT_FILES`    | `4`                                          | Parallelism when ingesting directories.        |
 | `RAG_BATCH_SIZE`              | `8`                                          | Embedding batch size for API requests.         |
 | `RAG_RERANK_CANDIDATES`       | `10`                                         | Number of candidates for reranking.            |
-| `RAG_MAX_CONCURRENT_REQUESTS` | `4` (if not set)                             | Maximum parallel HTTP requests for embeddings. |
-| `RAG_RERANK_MIN_CANDIDATES`   | `3` (if not set)                             | Skip reranking if fewer candidates (adaptive). |
+| `RAG_MAX_CONCURRENT_REQUESTS` | `4`                                          | Maximum parallel HTTP requests for embeddings. |
+| `RAG_RERANK_MIN_CANDIDATES`   | `3`                                          | Skip reranking if fewer candidates (adaptive). |
+| `RAG_CACHE_TTL`               | `300`                                        | Query cache TTL in seconds.                    |
 
 ---
 
 ## 🔌 Usage with Goose Agent
 
-Integrate the server as a **stdio** extension in `~/.config/goose/config.yaml`:
+### Global Environment (`.zshenv`)
+
+Set these in your `~/.zshenv` for all sessions:
+
+```bash
+# ~/.zshenv
+export OPENAI_API_KEY="sk-unused"
+export OPENAI_BASE_URL="http://localhost:4000/v1"
+export OPENAI_TIMEOUT=7200
+export SQLITE_VEC_PATH="$HOME/.config/rag-server/extensions/vec0.so"
+```
+
+### Goose Configuration (`~/.config/goose/config.yaml`)
+
+Integrate the server as a **stdio** extension:
 
 ```yaml
 extensions:
@@ -129,21 +188,17 @@ extensions:
     cmd: /home/bfrost/.config/rag-server/target/release/rag-server
     env:
       SQLITE_VEC_PATH: /home/bfrost/.config/rag-server/extensions/vec0.so
-      RAG_RERANK_URL: http://127.0.0.1:11436/rerank
-      RAG_LLM_URL: http://127.0.0.1:11434/v1/chat/completions
     timeout: 7200
 ```
+
+> **Note:** The RAG server reads all `RAG_*` environment variables. These can be set in `~/.config/rag-server/env` and sourced in your session.
 
 ### Dual Reranker Sessions (Zsh Aliases)
 
 Configure your `~/.zshrc` with these aliases for seamless reranker switching:
 
 ```bash
-# Swedish stack (BGE-Reranker-v2-M3 on port 11436)
-alias goose-local='_goose_session local-llama-server local-llama-server-embed local-llama-server-rerank'
-
-# English stack (Mxbai-Reranker-Large-v2 on port 11437)
-alias goose-local-en='_goose_session local-llama-server local-llama-server-embed local-llama-server-rerank-2'
+# ~/.zshrc
 
 _ensure_agentgateway() {
     if ! ss -tulpn | grep -q ":4000 "; then
@@ -163,26 +218,51 @@ _ensure_agentgateway() {
 
 _goose_session() {
     local model="${1:-local-llama-server}"
-    local embed="${2:-local-llama-server-embed}"
-    local rerank="${3:-local-llama-server-rerank}"
+    local embed="${2}"  # No default; let ~/.config/rag-server/env handle it
+    local rerank="${3}" # No default; let ~/.config/rag-server/env handle it
+
     _ensure_agentgateway || return 1
-    export OPENAI_API_KEY="sk-unused"
-    export OPENAI_BASE_URL="http://localhost:4000/v1"
-    export RAG_EMBED_MODEL="$embed"
-    export RAG_RERANK_MODEL="$rerank"
-    case "$rerank" in
-        local-llama-server-rerank)
-            export RAG_RERANK_URL="http://127.0.0.1:11436/rerank"
-            ;;
-        local-llama-server-rerank-2)
-            export RAG_RERANK_URL="http://127.0.0.1:11437/rerank"
-            ;;
-    esac
-    export RAG_RERANK_CANDIDATES=10
-    export RAG_MAX_CONCURRENT=4
-    export OPENAI_TIMEOUT=7200
+
+    # Source RAG environment variables (sets defaults)
+    source ~/.config/rag-server/env
+
+    # Override RAG_EMBED_MODEL and RAG_RERANK_MODEL if provided
+    if [ -n "$embed" ]; then
+        export RAG_EMBED_MODEL="$embed"
+    fi
+    if [ -n "$rerank" ]; then
+        export RAG_RERANK_MODEL="$rerank"
+        # Reload RAG_RERANK_URL from env file
+        unset RAG_RERANK_URL
+        source ~/.config/rag-server/env
+    fi
+
     GOOSE_MODEL="$model" goose session
 }
+
+# ==============================================================================
+# --- 1. SWEDISH STACK (Primary BGE Reranker on Port 11436) ---
+# ==============================================================================
+
+alias goose-local='_goose_session local-llama-server'
+alias goose-deepseek='_goose_session local-llama-server'
+alias goose-qwen-coder='_goose_session local-llama-server'
+alias goose-phi='_goose_session local-llama-server'
+alias goose-mistral='_goose_session mistral-large-latest'
+alias goose-codestral='_goose_session codestral-latest'
+alias goose-gemini='_goose_session gemini-3.5-flash'
+
+# ==============================================================================
+# --- 2. ENGLISH STACK (Mxbai Reranker on Port 11437) ---
+# ==============================================================================
+
+alias goose-local-en='_goose_session local-llama-server "" local-llama-server-rerank-2'
+alias goose-deepseek-en='_goose_session local-llama-server "" local-llama-server-rerank-2'
+alias goose-qwen-coder-en='_goose_session local-llama-server "" local-llama-server-rerank-2'
+alias goose-phi-en='_goose_session local-llama-server "" local-llama-server-rerank-2'
+alias goose-mistral-en='_goose_session mistral-large-latest "" local-llama-server-rerank-2'
+alias goose-codestral-en='_goose_session codestral-latest "" local-llama-server-rerank-2'
+alias goose-gemini-en='_goose_session gemini-3.5-flash "" local-llama-server-rerank-2'
 ```
 
 ---
@@ -363,7 +443,7 @@ Comprehensive testing with real legal documents validated all core features:
 - **Parallel Chunking:** Automatic parallel processing for documents with >500 sentences.
 - **Adaptive Reranking:** Skips reranking if fewer candidates than `RAG_RERANK_MIN_CANDIDATES` (default 3).
 - **Connection Pooling:** Reuses HTTP connections for better performance.
-- **Performance Optimizations:** Overall ingestion and query speed improvements.
+- **Environment Management:** Added dedicated `~/.config/rag-server/env` file for cleaner configuration.
 
 ### v2.2 (2026-06-20)
 
@@ -376,4 +456,3 @@ Comprehensive testing with real legal documents validated all core features:
 **Philosophy:** Native & Lean | Unified Memory | Sovereign AI\
 **License:** MIT\
 **Repository:** [github.com/bengtfrost/rag-server](https://github.com/bengtfrost/rag-server)
-

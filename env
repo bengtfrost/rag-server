@@ -1,0 +1,35 @@
+# ~/.config/rag-server/env
+# RAG Server Environment Variables (sourced only for RAG sessions)
+
+# Embedding model
+export RAG_EMBED_MODEL="local-llama-server-embed"
+
+# Reranker model (default: primary)
+export RAG_RERANK_MODEL="local-llama-server-rerank"
+
+# Reranker URL (derived from RAG_RERANK_MODEL)
+case "$RAG_RERANK_MODEL" in
+    local-llama-server-rerank)
+        export RAG_RERANK_URL="http://127.0.0.1:11436/rerank"
+        ;;
+    local-llama-server-rerank-2)
+        export RAG_RERANK_URL="http://127.0.0.1:11437/rerank"
+        ;;
+    *)
+        export RAG_RERANK_URL="http://127.0.0.1:11436/rerank"  # Fallback
+        ;;
+esac
+
+# Reranking settings
+export RAG_RERANK_CANDIDATES=10
+export RAG_RERANK_MIN_CANDIDATES=3
+
+# Concurrency settings
+export RAG_MAX_CONCURRENT=4
+export RAG_MAX_CONCURRENT_REQUESTS=4
+
+# Caching
+export RAG_CACHE_TTL=300
+
+# Database path
+export RAG_DB_PATH="$HOME/.config/rag-server/vectors.db"
