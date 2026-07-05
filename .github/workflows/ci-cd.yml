@@ -5,33 +5,30 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
-  workflow_dispatch: # Allow manual triggering
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
 
 env:
-  REGISTRY: ghcr.io # GitHub Container Registry
-  IMAGE_NAME: ${{ github.repository }} # e.g., "bengtfrost/rag-server"
-  RAG_SERVER_DIR: /usr/local/lib/rag-server # Directory for RAG Server files in the container
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }} # expands to owner/repo
 
 jobs:
-  build-and-test:
-    name: Build and Test
+  build:
+    name: Build & Test (host)
     runs-on: ubuntu-latest
-    container:
-      image: fedora:44
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Install Rust and dependencies
-        run: |
-          dnf install -y \
-            rust \
-            cargo \
-            sqlite-devel \
-            poppler-utils \
-            && dnf clean all
+      - name: Set up Rust
+        uses: actions/setup-rust@v1
+        with:
+          rust-version: stable
 
-      - name: Cache dependencies
+      - name: Cache cargo
         uses: actions/cache@v3
         with:
           path: |
@@ -40,71 +37,80 @@ jobs:
             target
           key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
 
-      - name: Build project
+      - name: Install build deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends build-essential libsqlite3-dev pkg-config libssl-dev poppler-utils
+
+      - name: Build (release)
         run: cargo build --release
 
-      - name: Run unit tests
+      - name: Run tests
         run: cargo test --release
 
-      - name: Upload binary as artifact
+      - name: Upload binary artifact
         uses: actions/upload-artifact@v4
         with:
           name: rag-server-binary
           path: target/release/rag-server
 
-  containerize:
+  build-and-push:
     name: Build and Push Container
-    needs: build-and-test # Ensure tests pass before containerizing
+    needs: build
     runs-on: ubuntu-latest
-    container:
-      image: fedora:44
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Download binary artifact
+      - name: Download built binary
         uses: actions/download-artifact@v4
         with:
           name: rag-server-binary
           path: target/release
 
-      - name: Install Podman
-        run: dnf install -y podman
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v2
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v2
 
       - name: Log in to GitHub Container Registry
-        run: |
-          echo "${{ secrets.GITHUB_TOKEN }}" | podman login ghcr.io -u ${{ github.actor }} --password-stdin
+        uses: docker/login-action@v2
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Build container image
-        run: |
-          podman build -t ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest .
-
-      - name: Push container image
-        run: |
-          podman push ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
+      - name: Build and push image
+        uses: docker/build-push-action@v4
+        with:
+          context: .
+          file: Containerfile
+          push: true
+          tags: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
 
   test-container:
-    name: Test Container
-    needs: containerize # Ensure container is built before testing
+    name: Smoke test container
+    needs: build-and-push
     runs-on: ubuntu-latest
-    container:
-      image: fedora:44
     steps:
-      - name: Install Podman
-        run: dnf install -y podman
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v2
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Pull container image
-        run: |
-          podman pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
+      - name: Pull image
+        run: docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
 
-      - name: Test CLI command (help)
-        run: |
-          podman run --rm ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest --help
+      - name: Test CLI (help)
+        run: docker run --rm ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest --help
 
-      - name: Test CLI command (query)
-        run: |
-          podman run --rm ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest query --help
+      - name: Test CLI (query)
+        run: docker run --rm ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest query --help
 
-      - name: Test CLI command (ingest-file)
-        run: |
-          podman run --rm ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest ingest-file --help
+      - name: Test CLI (ingest-file)
+        run: docker run --rm ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest ingest-file --help
