@@ -44,8 +44,8 @@ RUN apt-get update \
 RUN mkdir -p /usr/local/lib/rag-server/extensions
 
 # Copy built artifacts from the builder stage (ignore if not present)
-COPY --from=builder /usr/src/rag-server/extensions/vec0.so /usr/local/lib/rag-server/extensions/ 2>/dev/null || true
-COPY --from=builder /usr/src/rag-server/tokenizer.json /usr/local/lib/rag-server/ 2>/dev/null || true
+COPY --from=builder /usr/src/rag-server/extensions/vec0.so /usr/local/lib/rag-server/extensions/ || true
+COPY --from=builder /usr/src/rag-server/tokenizer.json /usr/local/lib/rag-server/ || true
 COPY --from=builder /usr/src/rag-server/target/release/rag-server /usr/local/bin/
 
 # Environment variables
