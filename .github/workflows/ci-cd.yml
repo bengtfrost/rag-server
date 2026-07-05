@@ -22,6 +22,10 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v7
 
+      - name: Get version from Cargo.toml
+        id: get_version
+        run: echo "VERSION=$(grep '^version' Cargo.toml | head -1 | cut -d '"' -f2)" >> $GITHUB_ENV
+
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v4
 
@@ -44,6 +48,7 @@ jobs:
           tags: |
             ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
             ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.sha }}
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:v${{ env.VERSION }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
