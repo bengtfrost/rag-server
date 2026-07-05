@@ -30,13 +30,13 @@ COPY . .
 RUN cargo build --release
 
 # Use a minimal Debian image for the final stage
-FROM debian:bookworm-slim
+FROM debian:bullseye-slim
 
 # Install runtime dependencies
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
        libsqlite3-0 \
-       libssl3 \
+       libssl1.1 \
        poppler-utils \
        ca-certificates \
     && rm -rf /var/lib/apt/lists/*
