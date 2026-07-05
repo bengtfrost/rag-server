@@ -465,26 +465,44 @@ Comprehensive testing with real legal documents validated all core features:
 
 ## 🔄 CI/CD Pipeline
 
-The project is continuously built and tested via GitHub Actions. The pipeline:
+The project is continuously built, tested, and published via GitHub Actions.
 
-- Uses a **multi‑stage Containerfile** based on **Debian Bookworm** (OpenSSL 3).
-- Builds the Rust binary in a container for reproducibility.
-- Pushes the resulting Docker image to **GitHub Container Registry (ghcr.io)**.
-- Runs smoke tests to verify basic CLI functionality.
+### Pipeline Stages
 
-**Status:** [![CI/CD Pipeline](https://github.com/bengtfrost/rag-server/actions/workflows/ci-cd.yml/badge.svg)](https://github.com/bengtfrost/rag-server/actions/workflows/ci-cd.yml)
+| Stage            | Description                                                                                                                     |
+| ---------------- | ------------------------------------------------------------------------------------------------------------------------------- |
+| **Build & Push** | Multi‑stage `Containerfile` based on **Debian Bookworm** (OpenSSL 3). Builds the Rust binary in a container and pushes to GHCR. |
+| **Smoke Tests**  | Runs basic CLI commands (`--help`, `query --help`, etc.) to verify the image works.                                             |
+| **Cleanup**      | Weekly (Sundays 03:00) cleanup of old images – keeps the 5 latest versions, deletes untagged images.                            |
 
-### How to use the container
+### Image Tags
+
+| Tag            | Description                                                    |
+| -------------- | -------------------------------------------------------------- |
+| `latest`       | Most recent build from the `main` branch.                      |
+| `<commit-sha>` | Exact commit hash for pinpoint rollbacks.                      |
+| `vX.Y.Z`       | Semantic version extracted from `Cargo.toml` (e.g., `v2.3.0`). |
+
+### Container Registry
+
+- **Registry:** `ghcr.io`
+- **Image:** `ghcr.io/bengtfrost/rag-server`
+- **Storage:** Free for public repositories.
+
+### How to Use the Container
 
 ```bash
 # Pull the latest image
 docker pull ghcr.io/bengtfrost/rag-server:latest
 
+# Pull a specific version
+docker pull ghcr.io/bengtfrost/rag-server:v2.3.0
+
 # Run the binary
 docker run --rm ghcr.io/bengtfrost/rag-server:latest --help
 ```
 
-The container is built on every push to `main` and is tagged with both `latest` and the commit SHA.
+**Status:** [![CI/CD Pipeline](https://github.com/bengtfrost/rag-server/actions/workflows/ci-cd.yml/badge.svg)](https://github.com/bengtfrost/rag-server/actions/workflows/ci-cd.yml)
 
 ---
 
@@ -492,3 +510,4 @@ The container is built on every push to `main` and is tagged with both `latest` 
 **Philosophy:** Native & Lean | Unified Memory | Sovereign AI\
 **License:** MIT\
 **Repository:** [github.com/bengtfrost/rag-server](https://github.com/bengtfrost/rag-server)
+
