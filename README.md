@@ -463,6 +463,31 @@ Comprehensive testing with real legal documents validated all core features:
 
 ---
 
+## 🔄 CI/CD Pipeline
+
+The project is continuously built and tested via GitHub Actions. The pipeline:
+
+- Uses a **multi‑stage Containerfile** based on **Debian Bookworm** (OpenSSL 3).
+- Builds the Rust binary in a container for reproducibility.
+- Pushes the resulting Docker image to **GitHub Container Registry (ghcr.io)**.
+- Runs smoke tests to verify basic CLI functionality.
+
+**Status:** [![CI/CD Pipeline](https://github.com/bengtfrost/rag-server/actions/workflows/ci-cd.yml/badge.svg)](https://github.com/bengtfrost/rag-server/actions/workflows/ci-cd.yml)
+
+### How to use the container
+
+```bash
+# Pull the latest image
+docker pull ghcr.io/bengtfrost/rag-server:latest
+
+# Run the binary
+docker run --rm ghcr.io/bengtfrost/rag-server:latest --help
+```
+
+The container is built on every push to `main` and is tagged with both `latest` and the commit SHA.
+
+---
+
 **Author:** [Bengt Frost](https://github.com/bengtfrost)\
 **Philosophy:** Native & Lean | Unified Memory | Sovereign AI\
 **License:** MIT\
