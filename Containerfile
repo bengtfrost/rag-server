@@ -43,10 +43,14 @@ RUN apt-get update \
 # Create directories for RAG Server files
 RUN mkdir -p /usr/local/lib/rag-server/extensions
 
-# Copy built artifacts from the builder stage (ignore if not present)
-COPY --from=builder /usr/src/rag-server/extensions/vec0.so /usr/local/lib/rag-server/extensions/ || true
-COPY --from=builder /usr/src/rag-server/tokenizer.json /usr/local/lib/rag-server/ || true
+# Copy built artifacts from the builder stage
+# Use RUN with sh to conditionally copy files if they exist
+RUN mkdir -p /usr/local/lib/rag-server/extensions
 COPY --from=builder /usr/src/rag-server/target/release/rag-server /usr/local/bin/
+
+# Copy optional files if they exist (use shell expansion)
+RUN if [ -f /usr/src/rag-server/extensions/vec0.so ]; then cp /usr/src/rag-server/extensions/vec0.so /usr/local/lib/rag-server/extensions/; fi
+RUN if [ -f /usr/src/rag-server/tokenizer.json ]; then cp /usr/src/rag-server/tokenizer.json /usr/local/lib/rag-server/; fi
 
 # Environment variables
 ENV SQLITE_VEC_PATH=/usr/local/lib/rag-server/extensions/vec0.so
