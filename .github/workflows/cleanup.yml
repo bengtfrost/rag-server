@@ -1,0 +1,22 @@
+name: Cleanup old container images
+
+on:
+  schedule:
+    - cron: "0 3 * * 0" # Every Sunday at 03:00
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  cleanup:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Delete old versions
+        uses: dataaxiom/ghcr-cleanup-action@v2
+        with:
+          package: rag-server
+          delete-untagged: true
+          keep-latest: 5
+          keep-versions: 3
