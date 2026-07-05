@@ -8,17 +8,22 @@ By bypassing the "PCIe dinosaur" and utilizing **Unified Memory Architecture (UM
 
 ---
 
-## ✨ Key Milestones in v2.3 (The "Hybrid & Optimized" Update)
+## 📡 Communication Model
 
-- **🔍 Hybrid Search:** Combines **semantic vector search** (BGE-M3) with **BM25 keyword search** (SQLite FTS5). Configurable weights allow fine-tuning for legal, technical, or general text domains.
-- **⚡ Pipeline Ingestion:** New `--pipeline` flag for streaming chunk‑generation and embedding in parallel, reducing ingestion time by **20–30%** for large documents.
-- **🔄 Query Cache:** Automatic caching of search results (TTL 5 min). Repeated queries are served instantly – **up to 100% speedup** for frequent searches. Use `--no-cache` to bypass.
-- **🗣️ Query Expansion:** Automatically expands broad queries using a local LLM (llama-server on port 11434) to generate synonyms and related terms, improving retrieval recall.
-- **🎯 Per-Query Reranker Selection:** Choose reranker model per query with `--rerank-url`. Seamlessly switch between **BGE-Reranker-v2-M3** (Swedish-optimized) and **Mxbai-Reranker-Large-v2** (English-optimized).
-- **🧠 Exact BGE-M3 Tokenization:** Integrated Hugging Face `tokenizers` crate for 1:1 parity with XLM-RoBERTa BPE standard.
-- **🖥️ Vulkan-Driven Vector Search:** Powered by `sqlite-vec` (v0.1.9+) with `vec0.so` extension for high-density ANN search directly on the iGPU.
-- **🔒 Zero Data Leakage:** 100% local processing. All code, databases, and metadata stored strictly at `~/.config/rag-server/`.
-- **🧹 Cache Management:** New `clear-cache` command to reset the query cache manually.
+The Rust RAG server is **not an HTTP server**. It communicates via:
+
+| Mode                | Protocol     | Description                                                                                    |
+| ------------------- | ------------ | ---------------------------------------------------------------------------------------------- |
+| **MCP Server Mode** | STDIO        | Started as a subprocess by Goose (or any MCP client). Uses stdin/stdout for JSON‑RPC messages. |
+| **CLI Mode**        | Command‑line | Run directly from the terminal with subcommands (e.g., `query`, `ingest-file`).                |
+
+**HTTP is only used internally** – the RAG server makes outgoing HTTP requests to local services:
+
+- **BGE-M3 Embedding** (port 11435)
+- **Reranker** (port 11436/11437)
+- **Local LLM for query expansion** (port 11434)
+
+**Agentgateway** is an HTTP proxy that handles cloud LLM access (port 4000), but the RAG server never serves HTTP – it only consumes.
 
 ---
 
@@ -29,13 +34,16 @@ The server communicates directly with local Vulkan-accelerated engines over nati
 ```mermaid
 graph TD
     A[Goose / Aider / CLI] -->|STDIO| B(Rust RAG Server)
-    B -->|Query Expansion| C[LLM Server :11434]
-    B -->|Embeddings| D[BGE-M3 :11435]
-    B -->|Reranking| E[Reranker :11436/11437]
+    B -->|HTTP| C[LLM Server :11434]
+    B -->|HTTP| D[BGE-M3 :11435]
+    B -->|HTTP| E[Reranker :11436/11437]
     B -->|Dynamic Loading| F[vec0.so Extension]
     F <--> G[(SQLite-Vec DB)]
     B -->|FTS5| H[(BM25 Index)]
     B -->|Cache| I[(Query Cache)]
+    J[Agentgateway :4000] -.->|HTTP Proxy| C
+    J -.->|HTTP Proxy| D
+    J -.->|HTTP Proxy| E
 ```
 
 **Explanation:**
@@ -45,6 +53,9 @@ graph TD
 - **Reranker (port 11436/11437):** Cross-encoder models for precision reranking (BGE for Swedish, Mxbai for English).
 - **SQLite-Vec + FTS5:** Vector search + BM25 keyword search in the same database.
 - **Query Cache:** In‑memory cache with 5‑minute TTL for repeated queries.
+- **Agentgateway (port 4000):** Optional HTTP proxy that can route to local or cloud models; **not required** for the RAG server to function.
+
+> **Note:** The RAG server makes outgoing HTTP calls to the LLM, embedding, and reranker services. It does **not** accept incoming HTTP requests. All MCP communication with Goose is via STDIO.
 
 ---
 
@@ -144,9 +155,9 @@ export RAG_DB_PATH="$HOME/.config/rag-server/vectors.db"
 | `SQLITE_VEC_PATH`             | `~/.config/rag-server/extensions/vec0.so`    | Path to the vector extension.                  |
 | `RAG_DB_PATH`                 | `~/.config/rag-server/vectors.db`            | Path to the local Knowledge Base.              |
 | `RAG_TOKENIZER_PATH`          | `~/.config/rag-server/tokenizer.json`        | BGE-M3 BPE dictionary.                         |
-| `RAG_EMBED_URL`               | `http://localhost:11435/v1/embeddings`       | Vulkan Embedding server.                       |
-| `RAG_RERANK_URL`              | `http://localhost:11436/rerank`              | Vulkan Reranker server (primary).              |
-| `RAG_LLM_URL`                 | `http://localhost:11434/v1/chat/completions` | Local LLM for query expansion (optional).      |
+| `RAG_EMBED_URL`               | `http://localhost:11435/v1/embeddings`       | HTTP endpoint for embedding server.            |
+| `RAG_RERANK_URL`              | `http://localhost:11436/rerank`              | HTTP endpoint for reranker server (primary).   |
+| `RAG_LLM_URL`                 | `http://localhost:11434/v1/chat/completions` | HTTP endpoint for LLM query expansion.         |
 | `RAG_CHUNK_SIZE`              | `1024` (Legal) / `3000` (Code)               | Max tokens per segment.                        |
 | `RAG_CHUNK_OVERLAP`           | `150` (Legal) / `400` (Code)                 | Token overlap for context.                     |
 | `RAG_EMBED_MODEL`             | `bge-m3`                                     | Model name sent to the embedder.               |
