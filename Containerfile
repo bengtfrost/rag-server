@@ -36,7 +36,7 @@ FROM debian:bookworm-slim
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
        libsqlite3-0 \
-       libssl1.1 \
+       libssl3 \
        poppler-utils \
        ca-certificates \
     && rm -rf /var/lib/apt/lists/*
