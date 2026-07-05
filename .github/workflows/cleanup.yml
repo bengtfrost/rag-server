@@ -13,10 +13,8 @@ jobs:
   cleanup:
     runs-on: ubuntu-latest
     steps:
-      - name: Delete old package versions
-        uses: actions/delete-package-versions@v5
+      - name: Delete old GHCR images
+        uses: dataaxiom/ghcr-cleanup-action@v1
         with:
-          package-name: 'rag-server'
-          package-type: 'container'
-          min-versions-to-keep: 5
-          delete-only-untagged-versions: true
+          delete-untagged: true
+          keep-n-tagged: 5
