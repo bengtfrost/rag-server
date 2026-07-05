@@ -475,6 +475,17 @@ The project is continuously built, tested, and published via GitHub Actions.
 | **Smoke Tests**  | Runs basic CLI commands (`--help`, `query --help`, etc.) to verify the image works.                                             |
 | **Cleanup**      | Weekly (Sundays 03:00) cleanup of old images – keeps the 5 latest versions, deletes untagged images.                            |
 
+### Multi‑Architecture Support
+
+The container image is built for both **amd64** (x86_64) and **arm64** (Apple Silicon, AWS Graviton, Raspberry Pi) architectures.
+
+| Platform  | Use Case                                                                |
+| --------- | ----------------------------------------------------------------------- |
+| **amd64** | Most servers, desktops, CI/CD runners, cloud VMs                        |
+| **arm64** | Apple Silicon (M1/M2/M3), AWS Graviton, Raspberry Pi, ARM‑based servers |
+
+Docker automatically selects the correct architecture when you pull the image.
+
 ### Image Tags
 
 | Tag            | Description                                                    |
@@ -492,7 +503,7 @@ The project is continuously built, tested, and published via GitHub Actions.
 ### How to Use the Container
 
 ```bash
-# Pull the latest image
+# Pull the latest image (auto‑selects your architecture)
 docker pull ghcr.io/bengtfrost/rag-server:latest
 
 # Pull a specific version
@@ -500,6 +511,19 @@ docker pull ghcr.io/bengtfrost/rag-server:v2.3.0
 
 # Run the binary
 docker run --rm ghcr.io/bengtfrost/rag-server:latest --help
+
+# Run in foreground (STDIO MCP server mode)
+docker run --rm -i ghcr.io/bengtfrost/rag-server:latest
+```
+
+### Verify the Architecture
+
+```bash
+# Inspect the multi‑arch manifest
+docker manifest inspect ghcr.io/bengtfrost/rag-server:latest
+
+# Check which arch you pulled
+docker inspect ghcr.io/bengtfrost/rag-server:latest | grep Architecture
 ```
 
 **Status:** [![CI/CD Pipeline](https://github.com/bengtfrost/rag-server/actions/workflows/ci-cd.yml/badge.svg)](https://github.com/bengtfrost/rag-server/actions/workflows/ci-cd.yml)
@@ -510,4 +534,3 @@ docker run --rm ghcr.io/bengtfrost/rag-server:latest --help
 **Philosophy:** Native & Lean | Unified Memory | Sovereign AI\
 **License:** MIT\
 **Repository:** [github.com/bengtfrost/rag-server](https://github.com/bengtfrost/rag-server)
-
