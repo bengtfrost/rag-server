@@ -1,4 +1,4 @@
-name: CI/CD Pipeline for RAG Server
+name: CI/CD Pipeline
 
 on:
   push:
@@ -13,61 +13,14 @@ permissions:
 
 env:
   REGISTRY: ghcr.io
-  IMAGE_NAME: ${{ github.repository }} # expands to owner/repo
+  IMAGE_NAME: ${{ github.repository }}
 
 jobs:
-  build:
-    name: Build & Test (host)
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Set up Rust
-        uses: actions-rs/toolchain@v1
-        with:
-          toolchain: stable
-          override: true
-
-      - name: Cache cargo
-        uses: actions/cache@v3
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            target
-          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
-
-      - name: Install build deps
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends build-essential libsqlite3-dev pkg-config libssl-dev poppler-utils
-
-      - name: Build (release)
-        run: cargo build --release
-
-      - name: Run tests
-        run: cargo test --release
-
-      - name: Upload binary artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: rag-server-binary
-          path: target/release/rag-server
-
   build-and-push:
-    name: Build and Push Container
-    needs: build
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout repository
+      - name: Checkout
         uses: actions/checkout@v4
-
-      - name: Download built binary
-        uses: actions/download-artifact@v4
-        with:
-          name: rag-server-binary
-          path: target/release
 
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v2
@@ -78,7 +31,7 @@ jobs:
       - name: Log in to GitHub Container Registry
         uses: docker/login-action@v2
         with:
-          registry: ghcr.io
+          registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
@@ -88,30 +41,34 @@ jobs:
           context: .
           file: Containerfile
           push: true
-          tags: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
+          tags: |
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.sha }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-  test-container:
-    name: Smoke test container
+  smoke-test:
     needs: build-and-push
     runs-on: ubuntu-latest
     steps:
-      - name: Log in to GitHub Container Registry
+      - name: Log in to GHCR
         uses: docker/login-action@v2
         with:
-          registry: ghcr.io
+          registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Pull image
         run: docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
 
-      - name: Test CLI (help)
+      - name: Test CLI – help
         run: docker run --rm ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest --help
 
-      - name: Test CLI (query)
+      - name: Test CLI – query help
         run: docker run --rm ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest query --help
 
-      - name: Test CLI (ingest-file)
+      - name: Test CLI – ingest-file help
         run: docker run --rm ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest ingest-file --help
+
+      - name: Test CLI – list-collections help
+        run: docker run --rm ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest list-collections --help

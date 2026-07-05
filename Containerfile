@@ -1,65 +1,63 @@
-# Use the official Rust slim image as the builder stage
-FROM rust:1-bullseye AS builder
+# =============================================================================
+# Stage 1: Builder – compile the Rust binary
+# =============================================================================
+FROM debian:bookworm-slim AS builder
 
-# Install build dependencies
-RUN apt-get update \
-    && apt-get install -y --no-install-recommends \
-       build-essential \
-       libsqlite3-dev \
-       pkg-config \
-       libssl-dev \
-       poppler-utils \
+# Install build dependencies (OpenSSL 3, SQLite, etc.)
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    curl \
+    pkg-config \
+    libsqlite3-dev \
+    libssl-dev \
+    ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
-# Set the working directory
-WORKDIR /usr/src/rag-server
+# Install Rust (latest stable)
+RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+ENV PATH="/root/.cargo/bin:${PATH}"
 
-# Copy manifest files first to leverage build cache for dependencies
+# Set up the build environment
+WORKDIR /app
+
+# Cache dependencies – copy only Cargo files first
 COPY Cargo.toml Cargo.lock ./
+RUN mkdir src && echo "fn main() {}" > src/main.rs \
+    && cargo build --release \
+    && rm -rf src target/release/deps/rag_server*
 
-# Create a dummy src to allow `cargo fetch` to cache dependencies when workspace layout is used
-RUN mkdir -p src && echo "fn main() { println!(\"hello\"); }" > src/main.rs || true
-
-# Fetch dependencies (cached unless Cargo.toml/Cargo.lock change)
-RUN cargo fetch --locked || true
-
-# Copy the rest of the source
+# Copy the actual source code
 COPY . .
 
-# Build the project in release mode
+# Build the release binary (dependencies are already cached)
 RUN cargo build --release
 
-# Use a minimal Debian image for the final stage
-FROM debian:bullseye-slim
+# =============================================================================
+# Stage 2: Runtime – minimal Debian Bookworm image
+# =============================================================================
+FROM debian:bookworm-slim AS runtime
 
-# Install runtime dependencies
-RUN apt-get update \
-    && apt-get install -y --no-install-recommends \
-       libsqlite3-0 \
-       libssl1.1 \
-       poppler-utils \
-       ca-certificates \
+# Install runtime dependencies (OpenSSL 3, SQLite, CA certificates)
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates \
+    libsqlite3-0 \
+    libssl3 \
     && rm -rf /var/lib/apt/lists/*
 
-# Create directories for RAG Server files
-RUN mkdir -p /usr/local/lib/rag-server/extensions
+# Create a non‑root user for security
+RUN adduser --disabled-password --gecos "" raguser
 
-# Copy built artifacts from the builder stage
-# Use RUN with sh to conditionally copy files if they exist
-RUN mkdir -p /usr/local/lib/rag-server/extensions
-COPY --from=builder /usr/src/rag-server/target/release/rag-server /usr/local/bin/
+# Copy the built binary from the builder stage
+COPY --from=builder /app/target/release/rag-server /usr/local/bin/rag-server
 
-# Copy optional files if they exist (use shell expansion)
-RUN if [ -f /usr/src/rag-server/extensions/vec0.so ]; then cp /usr/src/rag-server/extensions/vec0.so /usr/local/lib/rag-server/extensions/; fi
-RUN if [ -f /usr/src/rag-server/tokenizer.json ]; then cp /usr/src/rag-server/tokenizer.json /usr/local/lib/rag-server/; fi
+# Make sure the binary is executable
+RUN chmod +x /usr/local/bin/rag-server
 
-# Environment variables
-ENV SQLITE_VEC_PATH=/usr/local/lib/rag-server/extensions/vec0.so
-ENV RAG_TOKENIZER_PATH=/usr/local/lib/rag-server/tokenizer.json
-ENV RAG_DB_PATH=/usr/local/lib/rag-server/vectors.db
-
-# Expose the port used by rag-server (if it listens on 8080; change if different)
-EXPOSE 8080
+# Switch to non‑root user
+USER raguser
 
 # Set the entrypoint
 ENTRYPOINT ["/usr/local/bin/rag-server"]
+
+# Default command – help (shows usage)
+CMD ["--help"]
