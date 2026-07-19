@@ -1,5 +1,0 @@
-{
-  "tokenizer_version": 1,
-  "description": "Placeholder tokenizer file to avoid build error in CI. Replace with the real tokenizer.json if required.",
-  "vocab": []
-}
