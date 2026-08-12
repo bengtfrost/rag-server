@@ -1,9 +1,11 @@
 [package]
 name = "rag-server_blf"
-version = "2.3.1"
+version = "2.3.2"
 edition = "2024"
 description = "Sovereign, high-performance RAG MCP server written in Rust for local code and legal search."
 license = "MIT"
+repository = "https://github.com/bengtfrost/rag-server"
+homepage = "https://github.com/bengtfrost/rag-server"
 
 [dependencies]
 tokio = { version = "1", features = ["full"] }
