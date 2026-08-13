@@ -1,5 +1,5 @@
 [package]
-name = "rag-server-blf"
+name = "rag-server-mcp"
 version = "2.3.2"
 edition = "2024"
 description = "Sovereign, high-performance RAG MCP server written in Rust for local code and legal search."
