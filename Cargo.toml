@@ -2,6 +2,7 @@
 name = "rag-server-mcp"
 version = "2.3.3"
 edition = "2024"
+rust-version = "1.97"
 description = "Sovereign, high-performance RAG MCP server written in Rust for local code and legal search."
 license = "MIT"
 repository = "https://github.com/bengtfrost/rag-server"
@@ -25,7 +26,6 @@ futures = "0.3"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 clap = { version = "4", features = ["derive"] }
-
 # Optimizations
 rayon = "1.10"
 lazy_static = "1.5"
