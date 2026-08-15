@@ -2,7 +2,7 @@
 
 > **High-Performance Legal & Code Intelligence for the Terminal.**
 
-A "Native & Lean" implementation of a Retrieval-Augmented Generation (RAG) server written in **Rust**. This server exposes high-precision search logic via the **Model Context Protocol (MCP)**, specifically optimized for **Fedora 44** and **Intel iGPU (Vulkan)** hardware.
+A "Native & Lean" implementation of a Retrieval-Augmented Generation (RAG) server written in **Rust**. This server exposes high-precision search logic via the **Model Context Protocol (MCP)**, specifically optimized for **Void GNU/Linux** and **Intel iGPU (Vulkan)** hardware.
 
 By bypassing the "PCIe dinosaur" and utilizing **Unified Memory Architecture (UMA)**, this server provides the lightning-fast "memory" required for autonomous agents like **Goose** and **Aider**.
 
@@ -66,8 +66,11 @@ graph TD
 Ensure you have the Rust toolchain and the specialized `vec0` extension for SQLite.
 
 ```bash
-# Install system dependencies
-sudo dnf install -y sqlite-devel poppler-utils
+# Sync the XBPS package repository index
+sudo xbps-install -S
+
+# Install system dependencies (build tools, Rust toolchain, SQLite headers, PDF tooling)
+sudo xbps-install -y base-devel rust cargo sqlite-devel poppler-utils curl wget git
 
 # Download the specific vec0.so (v0.1.9+)
 mkdir -p ~/.config/rag-server/extensions
@@ -196,9 +199,9 @@ extensions:
     enabled: true
     name: rag
     type: stdio
-    cmd: /home/bfrost/.config/rag-server/target/release/rag-server
+    cmd: $HOME/.config/rag-server/target/release/rag-server
     env:
-      SQLITE_VEC_PATH: /home/bfrost/.config/rag-server/extensions/vec0.so
+      SQLITE_VEC_PATH: $HOME/.config/rag-server/extensions/vec0.so
     timeout: 7200
 ```
 
