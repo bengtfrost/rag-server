@@ -24,7 +24,11 @@ jobs:
 
       - name: Get version from Cargo.toml
         id: get_version
-        run: echo "VERSION=$(grep '^version' Cargo.toml | head -1 | cut -d '"' -f2)" >> $GITHUB_ENV
+        run: |
+          version="$(sed -n 's/^version *= *"\(.*\)"/\1/p' Cargo.toml)"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          # optional: print for logs
+          echo "Found version: $version"
 
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v4
