@@ -48,7 +48,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 RUN adduser --disabled-password --gecos "" raguser
 
 # Copy the built binary from the builder stage
-COPY --from=builder /app/target/release/rag-server /usr/local/bin/rag-server
+# The package name in Cargo.toml is `rag-server-mcp`, so the compiled binary
+# will be `rag-server-mcp`. Copy and install it as `/usr/local/bin/rag-server`.
+COPY --from=builder /app/target/release/rag-server-mcp /usr/local/bin/rag-server
 
 # Make sure the binary is executable
 RUN chmod +x /usr/local/bin/rag-server
