@@ -26,6 +26,10 @@
 *.code-workspace
 *.code-workspace.bak
 
+# Zed Editor
+.zed/
+.zed-settings.json
+
 # IntelliJ / CLion
 .idea/
 *.iml
