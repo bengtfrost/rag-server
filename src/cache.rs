@@ -1,7 +1,7 @@
-use std::sync::Arc;
-use std::time::{Duration, Instant};
 use dashmap::DashMap;
 use once_cell::sync::Lazy;
+use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 const MAX_CACHE_SIZE: usize = 1000;
 const DEFAULT_TTL_SECS: u64 = 300;
@@ -99,3 +99,4 @@ pub static QUERY_CACHE: Lazy<QueryCache> = Lazy::new(|| {
         .unwrap_or(DEFAULT_TTL_SECS);
     QueryCache::new(ttl)
 });
+
