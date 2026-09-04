@@ -24,7 +24,7 @@ pub struct Config {
 
 impl Config {
     pub fn from_env() -> Result<Self> {
-        let base_dir = PathBuf::from("/home/bfrost/.config/rag-server");
+        let base_dir = PathBuf::from("$HOME/.config/rag-server");
         std::fs::create_dir_all(&base_dir)?;
 
         Ok(Self {
@@ -54,8 +54,7 @@ impl Config {
                 .parse()
                 .unwrap_or(15),
             timeout_secs: 14400,
-            embed_model: env::var("RAG_EMBED_MODEL")
-                .unwrap_or_else(|_| "bge-m3".to_string()),
+            embed_model: env::var("RAG_EMBED_MODEL").unwrap_or_else(|_| "bge-m3".to_string()),
             rerank_model: env::var("RAG_RERANK_MODEL")
                 .unwrap_or_else(|_| "bge-reranker-v2-m3".to_string()),
             rerank_min_score: env::var("RAG_RERANK_MIN_SCORE")
