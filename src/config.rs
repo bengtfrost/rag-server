@@ -24,7 +24,7 @@ pub struct Config {
 
 impl Config {
     pub fn from_env() -> Result<Self> {
-        let base_dir = PathBuf::from("$HOME/.config/rag-server");
+        let base_dir = PathBuf::from("~/.config/rag-server");
         std::fs::create_dir_all(&base_dir)?;
 
         Ok(Self {
