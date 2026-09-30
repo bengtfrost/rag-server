@@ -103,7 +103,7 @@ async fn run_server() -> anyhow::Result<()> {
                         "capabilities": { "tools": {} },
                         "serverInfo": {
                             "name": "sovereign-rag-rust",
-                            "version": "2.3.0"
+                            "version": "2.3.5"
                         }
                     }
                 });
