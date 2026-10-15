@@ -1,6 +1,6 @@
 [package]
 name = "rag-server-mcp"
-version = "2.3.5"
+version = "2.3.6"
 edition = "2024"
 rust-version = "1.99"
 description = "Sovereign, high-performance RAG MCP server written in Rust for local code and legal search."
