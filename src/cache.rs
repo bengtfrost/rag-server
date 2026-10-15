@@ -87,7 +87,7 @@ impl QueryCache {
         self.inner.clear();
     }
 
-    // Ta bort eller kommentera bort oanvända metoder
+    // Remove or comment out unused methods
     // pub fn len(&self) -> usize { self.inner.len() }
     // pub fn is_empty(&self) -> bool { self.inner.is_empty() }
 }
@@ -99,4 +99,3 @@ pub static QUERY_CACHE: Lazy<QueryCache> = Lazy::new(|| {
         .unwrap_or(DEFAULT_TTL_SECS);
     QueryCache::new(ttl)
 });
-
