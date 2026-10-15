@@ -27,7 +27,7 @@ pub fn list_tools() -> Vec<serde_json::Value> {
     vec![
         tool_descriptor(
             "create_collection",
-            "Skapa en ny RAG-samling",
+            "Create a new RAG collection",
             json!({
                 "type": "object",
                 "properties": {
@@ -38,7 +38,7 @@ pub fn list_tools() -> Vec<serde_json::Value> {
         ),
         tool_descriptor(
             "ingest_file",
-            "Läs och indexera en fil direkt från disk. Sätt force=true för att tvinga re-indexering.",
+            "Read and index a file directly from disk. Set force=true to force re-indexing.",
             json!({
                 "type": "object",
                 "properties": {
@@ -47,14 +47,14 @@ pub fn list_tools() -> Vec<serde_json::Value> {
                     "document_id": {"type": "string"},
                     "encoding": {"type": "string"},
                     "force": {"type": "boolean"},
-                    "pipeline": {"type": "boolean", "description": "Använd pipeline-optimering"}
+                    "pipeline": {"type": "boolean", "description": "Use pipeline optimization"}
                 },
                 "required": ["collection", "file_path"]
             }),
         ),
         tool_descriptor(
             "ingest_directory",
-            "Indexera alla matchande filer i en katalog med parallell bearbetning.",
+            "Index all matching files in a directory using parallel processing.",
             json!({
                 "type": "object",
                 "properties": {
@@ -69,7 +69,7 @@ pub fn list_tools() -> Vec<serde_json::Value> {
         ),
         tool_descriptor(
             "add_documents",
-            "Indexera råtext-strängar direkt.",
+            "Index raw text strings directly.",
             json!({
                 "type": "object",
                 "properties": {
@@ -83,30 +83,30 @@ pub fn list_tools() -> Vec<serde_json::Value> {
         ),
         tool_descriptor(
             "query",
-            "Sök i samlingen med hybrid search (BM25 + vector) och reranking",
+            "Search the collection using hybrid search (BM25 + vector) and reranking",
             json!({
                 "type": "object",
                 "properties": {
                     "collection": {"type": "string"},
                     "query": {"type": "string"},
                     "top_k": {"type": "integer", "default": 5},
-                    "rerank_url": {"type": "string", "description": "Valfri reranker-URL"},
-                    "hybrid": {"type": "boolean", "description": "Använd hybrid search", "default": false},
-                    "vector_weight": {"type": "number", "description": "Vikt för vektorscore (0-1)", "default": 0.7},
-                    "bm25_weight": {"type": "number", "description": "Vikt för BM25-score (0-1)", "default": 0.3},
-                    "no_cache": {"type": "boolean", "description": "Skippa cache", "default": false}
+                    "rerank_url": {"type": "string", "description": "Optional reranker URL"},
+                    "hybrid": {"type": "boolean", "description": "Use hybrid search", "default": false},
+                    "vector_weight": {"type": "number", "description": "Weight for vector score (0-1)", "default": 0.7},
+                    "bm25_weight": {"type": "number", "description": "Weight for BM25 score (0-1)", "default": 0.3},
+                    "no_cache": {"type": "boolean", "description": "Skip cache", "default": false}
                 },
                 "required": ["collection", "query"]
             }),
         ),
         tool_descriptor(
             "list_collections",
-            "Lista alla samlingar i databasen",
+            "List all collections in the database",
             json!({ "type": "object", "properties": {} }),
         ),
         tool_descriptor(
             "delete_documents",
-            "Ta bort ett eller flera indexerade dokument från en samling. Tom lista = rensa hela samlingen.",
+            "Delete one or more indexed documents from a collection. Empty list = clear the entire collection.",
             json!({
                 "type": "object",
                 "properties": {
@@ -118,7 +118,7 @@ pub fn list_tools() -> Vec<serde_json::Value> {
         ),
         tool_descriptor(
             "delete_collection",
-            "Ta bort en hel samling inklusive alla dokument, chunks och metadata.",
+            "Delete an entire collection including all documents, chunks, and metadata.",
             json!({
                 "type": "object",
                 "properties": {
@@ -129,7 +129,7 @@ pub fn list_tools() -> Vec<serde_json::Value> {
         ),
         tool_descriptor(
             "clear_cache",
-            "Rensa frågecachen (TTL-baserad cache med LRU-eviction)",
+            "Clear the query cache (TTL-based cache with LRU eviction)",
             json!({ "type": "object", "properties": {} }),
         ),
     ]
@@ -193,9 +193,8 @@ pub async fn call_tool(
         }
         "clear_cache" => {
             crate::cache::QUERY_CACHE.clear();
-            Ok("✓ Cache rensad. Alla cachelagrade frågor har tagits bort.".to_string())
+            Ok("✓ Cache cleared. All cached queries have been removed.".to_string())
         }
         _ => Err(anyhow::anyhow!("Unknown tool: {}", name)),
     }
 }
-

@@ -20,7 +20,7 @@ pub async fn delete_documents(
 
     if !db_guard.collection_exists(&args.collection)? {
         return Err(anyhow::anyhow!(
-            "Fel: Samlingen '{}' finns inte.",
+            "Error: Collection '{}' does not exist.",
             args.collection
         ));
     }
@@ -29,7 +29,7 @@ pub async fn delete_documents(
         let (doc_count, _) = db_guard.get_collection_stats(&args.collection)?;
         db_guard.clear_collection(&args.collection)?;
         return Ok(format!(
-            "✓ Samlingen '{}' är nu tom. {} dokument borttagna.",
+            "✓ Collection '{}' is now empty. {} documents removed.",
             args.collection, doc_count
         ));
     }
@@ -49,13 +49,13 @@ pub async fn delete_documents(
     }
 
     let mut msg = format!(
-        "✓ Tog bort {} dokument från samlingen '{}'.",
+        "✓ Removed {} documents from collection '{}'.",
         existing.len(),
         args.collection
     );
     if !missing.is_empty() {
         msg.push_str(&format!(
-            "\nVarning: Hittades inte och hoppades över: {}",
+            "\nWarning: Not found and skipped: {}",
             missing.join(", ")
         ));
     }

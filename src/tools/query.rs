@@ -49,7 +49,10 @@ pub async fn query(
     } else {
         optimized_query.clone()
     };
-    debug!("Query: '{}' i samling '{}'", query_preview, args.collection);
+    debug!(
+        "Query: '{}' in collection '{}'",
+        query_preview, args.collection
+    );
 
     let t0 = Instant::now();
     let query_emb = get_embeddings(client, cfg, &[optimized_query.clone()], "query").await?;
@@ -57,7 +60,7 @@ pub async fn query(
         .first()
         .ok_or_else(|| anyhow::anyhow!("No embedding returned"))?;
 
-    debug!("Hämtar {} ANN-kandidater...", cfg.rerank_candidates);
+    debug!("Fetching {} ANN candidates...", cfg.rerank_candidates);
 
     // Build cache key
     let cache_key = format!(
@@ -86,10 +89,10 @@ pub async fn query(
     };
 
     if chunk_ids.is_empty() {
-        return Ok("Hittade inget relevant.".to_string());
+        return Ok("Found nothing relevant.".to_string());
     }
 
-    debug!("{} kandidater hämtade, hämtar text...", chunk_ids.len());
+    debug!("{} candidates fetched, fetching text...", chunk_ids.len());
     let db_guard = db.lock().await;
     let doc_map = db_guard.get_chunk_texts(&chunk_ids)?;
     drop(db_guard);
@@ -109,12 +112,12 @@ pub async fn query(
     .await?;
 
     if reranked.is_empty() {
-        return Ok("Inga tillräckligt relevanta träffar.".to_string());
+        return Ok("No sufficiently relevant matches.".to_string());
     }
 
     let elapsed = t0.elapsed();
     debug!(
-        "Query klar på {}, returnerar {} träffar.",
+        "Query completed in {}, returning {} matches.",
         format_duration(elapsed),
         reranked.len()
     );
@@ -123,7 +126,7 @@ pub async fn query(
     for (i, (idx, score)) in reranked.iter().enumerate() {
         if let Some((_id, text, parent)) = doc_map.get(*idx) {
             results.push(format!(
-                "[{}] (Källa: {}) Score: {:.4}\n{}",
+                "[{}] (Source: {}) Score: {:.4}\n{}",
                 i + 1,
                 parent,
                 score,
@@ -145,17 +148,21 @@ async fn run_search(
     let db_guard = db.lock().await;
 
     let chunk_ids: Vec<String> = if args.hybrid {
-        debug!("Använder hybrid search (BM25 + vector) med vikter {} / {}", 
-               args.vector_weight, args.bm25_weight);
-        // Använd den asynkrona versionen av hybrid_search
-        let results = db_guard.hybrid_search_async(
-            &args.collection,
-            query_emb.clone(),
-            optimized_query,
-            cfg.rerank_candidates * 2,
-            args.vector_weight,
-            args.bm25_weight,
-        ).await?;
+        debug!(
+            "Using hybrid search with weights {} / {}",
+            args.vector_weight, args.bm25_weight
+        );
+        // Use the asynchronous version of hybrid_search
+        let results = db_guard
+            .hybrid_search_async(
+                &args.collection,
+                query_emb.clone(),
+                optimized_query,
+                cfg.rerank_candidates * 2,
+                args.vector_weight,
+                args.bm25_weight,
+            )
+            .await?;
         results.iter().map(|(id, _, _)| id.clone()).collect()
     } else {
         db_guard

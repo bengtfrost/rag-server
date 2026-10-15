@@ -42,7 +42,7 @@ pub async fn ingest_directory(
 ) -> anyhow::Result<String> {
     let dir_path = &args.directory_path;
     if !std::path::Path::new(dir_path).is_dir() {
-        return Err(anyhow::anyhow!("Katalogen hittades inte: {}", dir_path));
+        return Err(anyhow::anyhow!("Directory not found: {}", dir_path));
     }
 
     let exts: Vec<String> = args
@@ -77,13 +77,13 @@ pub async fn ingest_directory(
     if files.is_empty() {
         let exts_str = exts_set.iter().cloned().collect::<Vec<_>>().join(", ");
         return Ok(format!(
-            "Inga filer med ändelserna [{}] hittades i {}.",
+            "No files with extensions [{}] found in {}.",
             exts_str, dir_path
         ));
     }
 
     debug!(
-        "Katalogindexering startar: {} filer i '{}' (force={})...",
+        "Directory indexing starting: {} files in '{}' (force={})...",
         files.len(),
         dir_path,
         args.force
@@ -108,7 +108,7 @@ pub async fn ingest_directory(
             ) {
                 Ok(chunks) => {
                     debug!(
-                        "  Chunkat: '{}' (doc_id='{}') → {} segment",
+                        "  Chunked: '{}' (doc_id='{}') → {} chunks",
                         std::path::Path::new(fp)
                             .file_name()
                             .unwrap_or_default()
@@ -120,7 +120,7 @@ pub async fn ingest_directory(
                 }
                 Err(e) => {
                     debug!(
-                        "  Fel vid chunkning av '{}': {}",
+                        "  Error chunking '{}': {}",
                         std::path::Path::new(fp)
                             .file_name()
                             .unwrap_or_default()
@@ -132,7 +132,7 @@ pub async fn ingest_directory(
             },
             Err(e) => {
                 debug!(
-                    "  Fel vid läsning av '{}': {}",
+                    "  Error reading '{}': {}",
                     std::path::Path::new(fp)
                         .file_name()
                         .unwrap_or_default()
@@ -167,7 +167,7 @@ pub async fn ingest_directory(
                         .to_string_lossy()
                         .to_string(),
                     0,
-                    format!("fel – {}", e),
+                    format!("error – {}", e),
                 ));
             }
             if chunks.is_empty() {
@@ -178,7 +178,7 @@ pub async fn ingest_directory(
                         .to_string_lossy()
                         .to_string(),
                     0,
-                    "tom fil".to_string(),
+                    "empty file".to_string(),
                 ));
             }
             let db_guard = db.lock().await;
@@ -190,7 +190,7 @@ pub async fn ingest_directory(
                         .to_string_lossy()
                         .to_string(),
                     0,
-                    "redan indexerad".to_string(),
+                    "already indexed".to_string(),
                 ));
             }
             drop(db_guard);
@@ -200,7 +200,7 @@ pub async fn ingest_directory(
             db_guard.insert_chunks(&collection, &doc_id, chunks.clone(), embeddings.clone())?;
             drop(db_guard);
 
-            let action = if force { "re-indexerad" } else { "indexerad" };
+            let action = if force { "re-indexed" } else { "indexed" };
             Ok((
                 std::path::Path::new(&fp)
                     .file_name()
@@ -222,7 +222,7 @@ pub async fn ingest_directory(
                 total_segments += seg;
                 let prefix = if seg > 0 {
                     "✓"
-                } else if msg.contains("redan indexerad") || msg.contains("hoppades") {
+                } else if msg.contains("already indexed") || msg.contains("skipped") {
                     "⚠"
                 } else {
                     "✗"
@@ -230,16 +230,16 @@ pub async fn ingest_directory(
                 result_lines.push(format!("  {} {}: {}", prefix, filename, msg));
             }
             Ok(Err(e)) => {
-                result_lines.push(format!("  ✗ {}: {}", "fil", e));
+                result_lines.push(format!("  ✗ {}: {}", "file", e));
             }
             Err(e) => {
-                result_lines.push(format!("  ✗ task panik: {}", e));
+                result_lines.push(format!("  ✗ task panic: {}", e));
             }
         }
     }
 
     let summary = format!(
-        "Katalogindexering klar. {} filer · {} segment · samling: '{}'",
+        "Directory indexing complete. {} files · {} chunks · collection: '{}'",
         files.len(),
         total_segments,
         args.collection

@@ -18,7 +18,7 @@ pub async fn delete_collection(
 
     if !db_guard.collection_exists(&args.name)? {
         return Err(anyhow::anyhow!(
-            "Fel: Samlingen '{}' finns inte.",
+            "Error: Collection '{}' does not exist.",
             args.name
         ));
     }
@@ -27,7 +27,7 @@ pub async fn delete_collection(
     db_guard.delete_collection(&args.name)?;
 
     Ok(format!(
-        "✓ Samlingen '{}' är borttagen. {} dokument och {} segment raderade.",
+        "✓ Collection '{}' deleted. {} documents and {} chunks removed.",
         args.name, doc_count, chunk_count
     ))
 }

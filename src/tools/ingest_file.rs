@@ -45,7 +45,7 @@ pub async fn ingest_file(
 ) -> anyhow::Result<String> {
     let file_path = &args.file_path;
     if !std::path::Path::new(file_path).is_file() {
-        return Err(anyhow::anyhow!("Fil hittades inte: {}", file_path));
+        return Err(anyhow::anyhow!("File not found: {}", file_path));
     }
 
     let doc_id = args.document_id.clone().unwrap_or_else(|| {
@@ -57,7 +57,7 @@ pub async fn ingest_file(
     let text = extract_text_from_file(file_path, Some(&args.encoding))?;
     let size_kb = std::fs::metadata(file_path)?.len() / 1024;
     debug!(
-        "Startar ingest av '{}' ({} KB, doc_id='{}')",
+        "Starting ingestion of '{}' ({} KB, doc_id='{}')",
         std::path::Path::new(file_path)
             .file_name()
             .unwrap_or_default()
@@ -71,7 +71,7 @@ pub async fn ingest_file(
 
     if db_guard.doc_exists(&args.collection, &doc_id)? && !args.force {
         return Ok(format!(
-            "Varning: '{}' är redan indexerat i '{}'. Inga ändringar gjordes.",
+            "Warning: '{}' is already indexed in '{}'. No changes made.",
             doc_id, args.collection
         ));
     }
@@ -97,14 +97,14 @@ pub async fn ingest_file(
             &cfg.tokenizer_path,
         )?;
         if chunks.is_empty() {
-            return Ok("Ingen text att indexera.".to_string());
+            return Ok("No text to index.".to_string());
         }
         let embeddings = get_embeddings(client, cfg, &chunks, &doc_id).await?;
         (chunks, embeddings)
     };
 
     if chunks.is_empty() {
-        return Ok("Ingen text att indexera.".to_string());
+        return Ok("No text to index.".to_string());
     }
 
     let mut db_guard = db.lock().await;
@@ -117,14 +117,10 @@ pub async fn ingest_file(
     drop(db_guard);
 
     let elapsed = t0.elapsed();
-    let action = if args.force {
-        "Re-indexerade"
-    } else {
-        "Indexerade"
-    };
+    let action = if args.force { "Re-indexed" } else { "Indexed" };
 
     Ok(format!(
-        "✓ Klar! {} {} segment från '{}' (doc_id='{}') i '{}' på {}.",
+        "✓ Done! {} {} chunks from '{}' (doc_id='{}') in '{}' in {}.",
         action,
         chunks.len(),
         std::path::Path::new(file_path)
@@ -145,4 +141,3 @@ fn format_duration(d: std::time::Duration) -> String {
         format!("{}m {}s", secs / 60, secs % 60)
     }
 }
-

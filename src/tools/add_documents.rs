@@ -24,7 +24,7 @@ pub struct AddDocumentsCliArgs {
     #[arg(short, long)]
     pub collection: String,
     #[arg(short, long)]
-    pub input: String, // sökväg till JSON-fil med {ids: [...], documents: [...]}
+    pub input: String, // path to JSON file containing {ids: [...], documents: [...]}
     #[arg(short, long)]
     pub force: bool,
 }
@@ -36,9 +36,7 @@ pub async fn add_documents(
     args: AddDocumentsArgs,
 ) -> anyhow::Result<String> {
     if args.ids.len() != args.documents.len() {
-        return Err(anyhow::anyhow!(
-            "Antal ids och dokument stämmer inte överens."
-        ));
+        return Err(anyhow::anyhow!("Number of IDs and documents do not match."));
     }
 
     let db_guard = db.lock().await;
@@ -52,7 +50,7 @@ pub async fn add_documents(
     let t0 = Instant::now();
 
     for (i, (doc_id, doc_text)) in args.ids.iter().zip(args.documents.iter()).enumerate() {
-        debug!("Dokument {}/{}: '{}'", i + 1, args.ids.len(), doc_id);
+        debug!("Document {}/{}: '{}'", i + 1, args.ids.len(), doc_id);
         let db_guard = db.lock().await;
         let exists = db_guard.doc_exists(&args.collection, doc_id)?;
         drop(db_guard);
@@ -75,10 +73,10 @@ pub async fn add_documents(
     }
 
     if to_insert.is_empty() {
-        let mut msg = format!("Inga nya dokument att indexera i '{}'.", args.collection);
+        let mut msg = format!("No new documents to index in '{}'.", args.collection);
         if !skipped.is_empty() {
             msg.push_str(&format!(
-                "\nHoppades över (redan indexerade): {}",
+                "\nSkipped (already indexed): {}",
                 skipped.join(", ")
             ));
         }
@@ -121,14 +119,14 @@ pub async fn add_documents(
     let total_chunks: usize = insert_data.iter().map(|(_, chunks, _)| chunks.len()).sum();
 
     let mut msg = format!(
-        "✓ Indexerade {} segment i '{}' på {}.",
+        "✓ Indexed {} chunks in '{}' in {}.",
         total_chunks,
         args.collection,
         format_duration(elapsed)
     );
     if !skipped.is_empty() {
         msg.push_str(&format!(
-            "\nVarning: Redan indexerade (hoppades över): {}",
+            "\nWarning: Already indexed (skipped): {}",
             skipped.join(", ")
         ));
     }

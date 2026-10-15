@@ -16,6 +16,5 @@ pub async fn create_collection(
 ) -> anyhow::Result<String> {
     let db = db.lock().await;
     db.insert_collection(&args.name)?;
-    Ok(format!("Samlingen '{}' är nu redo.", args.name))
+    Ok(format!("Collection '{}' is now ready.", args.name))
 }
-
