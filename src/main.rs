@@ -20,10 +20,10 @@ use crate::config::Config;
 use crate::db::Db;
 use crate::tools::*;
 
-// CLI-struktur
+// CLI structure
 #[derive(Parser)]
 #[command(name = "rag-server")]
-#[command(about = "Sovereign Rust RAG Server med lokal embedding och reranking")]
+#[command(about = "Sovereign Rust RAG Server with local embedding and reranking")]
 #[command(version = "2.3.5")]
 struct Cli {
     #[command(subcommand)]
@@ -32,28 +32,28 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
-    #[command(about = "Skapa en ny samling")]
+    #[command(about = "Create a new collection")]
     CreateCollection(CreateCollectionArgs),
 
-    #[command(about = "Indexera en enskild fil")]
+    #[command(about = "Index a single file")]
     IngestFile(IngestFileArgs),
 
-    #[command(about = "Indexera alla filer i en katalog")]
+    #[command(about = "Index all files in a directory")]
     IngestDirectory(IngestDirectoryArgs),
 
-    #[command(about = "Sök i en samling")]
+    #[command(about = "Search a collection")]
     Query(QueryArgs),
 
-    #[command(about = "Lista alla samlingar")]
+    #[command(about = "List all collections")]
     ListCollections,
 
-    #[command(about = "Ta bort dokument från en samling")]
+    #[command(about = "Remove documents from a collection")]
     DeleteDocuments(DeleteDocumentsArgs),
 
-    #[command(about = "Ta bort en hel samling")]
+    #[command(about = "Delete an entire collection")]
     DeleteCollection(DeleteCollectionArgs),
 
-    #[command(about = "Rensa cache")]
+    #[command(about = "Clear cache")]
     ClearCache,
 }
 
@@ -110,7 +110,7 @@ async fn run_server() -> anyhow::Result<()> {
                 println!("{}", resp);
             }
             "notifications/initialized" => {
-                eprintln!("[*] Goose ansluten till Rust RAG.");
+                eprintln!("[*] Client initialized connection.");
             }
             "tools/list" => {
                 let resp = json!({
@@ -125,7 +125,7 @@ async fn run_server() -> anyhow::Result<()> {
             "tools/call" => {
                 let tool_name = req["params"]["name"].as_str().unwrap_or("");
                 let args = &req["params"]["arguments"];
-                eprintln!("[*] Goose anropar verktyg: {}", tool_name);
+                eprintln!("[*] Executing tool call: {}", tool_name);
 
                 match call_tool(tool_name, args.clone(), &cfg, &db, &client).await {
                     Ok(result_text) => {
@@ -197,7 +197,7 @@ async fn run_cli(command: Commands) -> anyhow::Result<()> {
         }
         Commands::ClearCache => {
             cache::QUERY_CACHE.clear();
-            println!("✓ Cache rensad.");
+            println!("✓ Cache cleared.");
         }
     }
     Ok(())
