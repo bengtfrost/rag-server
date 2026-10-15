@@ -1,4 +1,4 @@
-# 🚀 Sovereign RAG MCP Server (Rust)
+🚀 Sovereign RAG MCP Server (Rust)
 
 > **High-Performance Legal & Code Intelligence for the Terminal.**
 
@@ -75,7 +75,7 @@ sudo xbps-install -y base-devel rust cargo sqlite-devel poppler-utils curl wget 
 # Download the specific vec0.so (v0.1.9+)
 mkdir -p ~/.config/rag-server/extensions
 cd /tmp
-curl -L -O https://github.com/asg017/sqlite-vec/releases/download/v0.1.9/sqlite-vec-0.1.9-loadable-linux-x86_64.tar.gz
+curl -L -O [https://github.com/asg017/sqlite-vec/releases/download/v0.1.9/sqlite-vec-0.1.9-loadable-linux-x86_64.tar.gz](https://github.com/asg017/sqlite-vec/releases/download/v0.1.9/sqlite-vec-0.1.9-loadable-linux-x86_64.tar.gz)
 tar -xvf sqlite-vec-0.1.9-loadable-linux-x86_64.tar.gz
 mv vec0.so ~/.config/rag-server/extensions/
 ```
@@ -85,7 +85,7 @@ mv vec0.so ~/.config/rag-server/extensions/
 Download the BGE-M3 metadata required for exact tokenization.
 
 ```bash
-wget https://huggingface.co/BAAI/bge-m3/resolve/main/tokenizer.json -O ~/.config/rag-server/tokenizer.json
+wget [https://huggingface.co/BAAI/bge-m3/resolve/main/tokenizer.json](https://huggingface.co/BAAI/bge-m3/resolve/main/tokenizer.json) -O ~/.config/rag-server/tokenizer.json
 ```
 
 ### 3. Build the Binary
@@ -126,13 +126,13 @@ export RAG_RERANK_MODEL="local-llama-server-rerank"
 # Reranker URL (derived from RAG_RERANK_MODEL)
 case "$RAG_RERANK_MODEL" in
     local-llama-server-rerank)
-        export RAG_RERANK_URL="http://127.0.0.1:11436/rerank"
+        export RAG_RERANK_URL="[http://127.0.0.1:11436/rerank](http://127.0.0.1:11436/rerank)"
         ;;
     local-llama-server-rerank-2)
-        export RAG_RERANK_URL="http://127.0.0.1:11437/rerank"
+        export RAG_RERANK_URL="[http://127.0.0.1:11437/rerank](http://127.0.0.1:11437/rerank)"
         ;;
     *)
-        export RAG_RERANK_URL="http://127.0.0.1:11436/rerank"  # Fallback
+        export RAG_RERANK_URL="[http://127.0.0.1:11436/rerank](http://127.0.0.1:11436/rerank)"  # Fallback
         ;;
 esac
 
@@ -154,7 +154,7 @@ export RAG_DB_PATH="$HOME/.config/rag-server/vectors.db"
 ### Environment Variables Reference
 
 | Variable                      | Default Value                                | Description                                    |
-| :---------------------------- | :------------------------------------------- | :--------------------------------------------- |
+| ----------------------------- | -------------------------------------------- | ---------------------------------------------- |
 | `SQLITE_VEC_PATH`             | `~/.config/rag-server/extensions/vec0.so`    | Path to the vector extension.                  |
 | `RAG_DB_PATH`                 | `~/.config/rag-server/vectors.db`            | Path to the local Knowledge Base.              |
 | `RAG_TOKENIZER_PATH`          | `~/.config/rag-server/tokenizer.json`        | BGE-M3 BPE dictionary.                         |
@@ -284,13 +284,21 @@ alias goose-gemini-en='_goose_session gemini-3.5-flash "" local-llama-server-rer
 ## 🛠 MCP Tools (available to Goose)
 
 - `create_collection` – Initializes a new KB (e.g., `juridik` or `rust-src`).
+
 - `ingest_file` – Chunks, tokenizes, and indexes a file via the iGPU.
+
 - `ingest_directory` – Bulk‑ingests all matching files in a directory with parallel processing.
+
 - `add_documents` – Indexes raw text strings directly from JSON.
+
 - `query` – Performs **hybrid semantic + BM25 keyword search** with reranking for **97% citation accuracy**.
+
 - `list_collections` – Displays all local libraries and document counts.
+
 - `delete_documents` – Deletes one or more documents from a collection.
+
 - `delete_collection` – Removes an entire collection and all its data.
+
 - `clear_cache` – Clears the in‑memory query cache.
 
 ---
@@ -355,7 +363,7 @@ The same binary acts as a full‑featured command‑line tool. Run it without ar
 ./target/release/rag-server query --collection juridik --query "tolkningsregler" --hybrid --vector-weight 0.4 --bm25-weight 0.6
 
 # Specify reranker URL per query
-./target/release/rag-server query --collection juridik --query "constitutional law" --rerank-url http://127.0.0.1:11437/rerank
+./target/release/rag-server query --collection juridik --query "constitutional law" --rerank-url [http://127.0.0.1:11437/rerank](http://127.0.0.1:11437/rerank)
 
 # Bypass cache (force fresh search)
 ./target/release/rag-server query --collection juridik --query "tolkningsregler" --hybrid --no-cache
@@ -373,7 +381,7 @@ The same binary acts as a full‑featured command‑line tool. Run it without ar
 ```json
 {
   "name": "query",
-  "description": "Sök i samlingen med hybrid search (BM25 + vector) och reranking",
+  "description": "Search the collection using hybrid search (BM25 + vector) and reranking",
   "inputSchema": {
     "type": "object",
     "properties": {
@@ -382,21 +390,21 @@ The same binary acts as a full‑featured command‑line tool. Run it without ar
       "top_k": { "type": "integer", "default": 5 },
       "rerank_url": {
         "type": "string",
-        "description": "Valfri reranker-URL (e.g., http://127.0.0.1:11437/rerank)"
+        "description": "Optional reranker-URL (e.g., [http://127.0.0.1:11437/rerank](http://127.0.0.1:11437/rerank))"
       },
       "hybrid": {
         "type": "boolean",
-        "description": "Använd hybrid search (BM25 + vector)",
+        "description": "Use hybrid search (BM25 + vector)",
         "default": false
       },
       "vector_weight": {
         "type": "number",
-        "description": "Vikt för vektorscore (0-1)",
+        "description": "Weight for vector score (0-1)",
         "default": 0.7
       },
       "bm25_weight": {
         "type": "number",
-        "description": "Vikt för BM25-score (0-1)",
+        "description": "Weight for BM25 score (0-1)",
         "default": 0.3
       },
       "no_cache": {
@@ -417,10 +425,15 @@ The same binary acts as a full‑featured command‑line tool. Run it without ar
 By utilizing **Quantization-Aware Training (QAT-UD)** and **N-Gram software speculation**, this Rust implementation delivers:
 
 - **800% Speedup:** Indexing 700 project chunks reduced from **45+ mins (CPU)** to **~5 mins (iGPU)**.
+
 - **20–30% Faster Ingestion:** The new pipeline (`--pipeline`) overlaps chunk generation and embedding, reducing total time.
+
 - **100% Speedup on Repeated Queries:** Query cache serves identical queries instantly.
+
 - **Linguistic Precision:** Handles Swedish legal nuances and complex Rust traits without semantic drift.
+
 - **Zero Leakage:** 100% of data remains on local silicon.
+
 - **Hybrid Search Recall:** BM25 + vector search significantly improves recall for both exact keywords and semantic concepts.
 
 ---
@@ -429,19 +442,41 @@ By utilizing **Quantization-Aware Training (QAT-UD)** and **N-Gram software spec
 
 Comprehensive testing with real legal documents validated all core features:
 
-| Test                             | Result                                     |
-| -------------------------------- | ------------------------------------------ |
-| ✅ Collection Management         | Create, list, delete                       |
-| ✅ Single File Ingestion         | 7,686-line file → 96 segments in 13 min    |
-| ✅ Pipeline Ingestion            | Faster, reliable with large documents      |
-| ✅ Directory Bulk Ingestion      | 3 files → 15 segments                      |
-| ✅ Mixed Content (TXT + PDF)     | 33+ segments                               |
-| ✅ Semantic Search               | Exact citation retrieval with 97% accuracy |
-| ✅ Hybrid Search (BM25 + Vector) | Improved recall for keyword-heavy queries  |
-| ✅ Reranker Switching            | BGE (Swedish) ↔ Mxbai (English) seamless   |
-| ✅ Query Expansion               | LLM-based synonym generation               |
-| ✅ Query Cache                   | Instant response on repeated queries       |
-| ✅ Document/Collection Deletion  | Clean removal                              |
+| Test                     | Result               |
+| ------------------------ | -------------------- |
+| ✅ Collection Management | Create, list, delete |
+
+|
+| ✅ Single File Ingestion | 7,686-line file → 96 segments in 13 min
+
+|
+| ✅ Pipeline Ingestion | Faster, reliable with large documents
+
+|
+| ✅ Directory Bulk Ingestion | 3 files → 15 segments
+
+|
+| ✅ Mixed Content (TXT + PDF) | 33+ segments
+
+|
+| ✅ Semantic Search | Exact citation retrieval with 97% accuracy
+
+|
+| ✅ Hybrid Search (BM25 + Vector) | Improved recall for keyword-heavy queries
+
+|
+| ✅ Reranker Switching | BGE (Swedish) ↔ Mxbai (English) seamless
+
+|
+| ✅ Query Expansion | LLM-based synonym generation
+
+|
+| ✅ Query Cache | Instant response on repeated queries
+
+|
+| ✅ Document/Collection Deletion | Clean removal
+
+|
 
 **All critical tests passed.** The server is production-ready for legal, codebase, and technical QA deployments.
 
@@ -449,19 +484,31 @@ Comprehensive testing with real legal documents validated all core features:
 
 ## 📝 Change Log
 
+### v2.3.6 (2026-10-16)
+
+- **Complete Localization:** Translated all remaining Swedish internal logs, match messages, query performance metrics, and initialization comments into clean English.
+- **Multi-Architecture Support:** Verified support and container image builds for `linux/amd64` and `linux/arm64`.
+
 ### v2.3 (2026-07-04)
 
 - **Pipeline Ingestion:** New `--pipeline` flag for overlapping chunking and embedding.
+
 - **Query Cache:** In‑memory cache (5 min TTL) for repeated query results; added `--no-cache` and `clear-cache` command.
+
 - **Parallel Embedding:** Concurrent HTTP requests for embedding generation (configurable with `RAG_MAX_CONCURRENT_REQUESTS`).
+
 - **Parallel Chunking:** Automatic parallel processing for documents with >500 sentences.
+
 - **Adaptive Reranking:** Skips reranking if fewer candidates than `RAG_RERANK_MIN_CANDIDATES` (default 3).
+
 - **Connection Pooling:** Reuses HTTP connections for better performance.
+
 - **Environment Management:** Added dedicated `~/.config/rag-server/env` file for cleaner configuration.
 
 ### v2.2 (2026-06-20)
 
 - Initial Rust port with BGE-M3 embeddings and BGE-Reranker-v2-M3.
+
 - Hybrid search (BM25 + vector) and per-query reranker selection.
 
 ---
@@ -475,32 +522,48 @@ The project is continuously built, tested, and published via GitHub Actions.
 | Stage            | Description                                                                                                                     |
 | ---------------- | ------------------------------------------------------------------------------------------------------------------------------- |
 | **Build & Push** | Multi‑stage `Containerfile` based on **Debian Bookworm** (OpenSSL 3). Builds the Rust binary in a container and pushes to GHCR. |
-| **Smoke Tests**  | Runs basic CLI commands (`--help`, `query --help`, etc.) to verify the image works.                                             |
-| **Cleanup**      | Weekly (Sundays 03:00) cleanup of old images – keeps the 5 latest versions, deletes untagged images.                            |
+
+|
+| **Smoke Tests** | Runs basic CLI commands (`--help`, `query --help`, etc.) to verify the image works.
+
+|
+| **Cleanup** | Weekly (Sundays 03:00) cleanup of old images – keeps the 5 latest versions, deletes untagged images.
+
+|
 
 ### Multi‑Architecture Support
 
 The container image is built for both **amd64** (x86_64) and **arm64** (Apple Silicon, AWS Graviton, Raspberry Pi) architectures.
 
-| Platform  | Use Case                                                                |
-| --------- | ----------------------------------------------------------------------- |
-| **amd64** | Most servers, desktops, CI/CD runners, cloud VMs                        |
-| **arm64** | Apple Silicon (M1/M2/M3), AWS Graviton, Raspberry Pi, ARM‑based servers |
+| Platform  | Use Case                                         |
+| --------- | ------------------------------------------------ |
+| **amd64** | Most servers, desktops, CI/CD runners, cloud VMs |
+
+|
+| **arm64** | Apple Silicon (M1/M2/M3), AWS Graviton, Raspberry Pi, ARM‑based servers
+
+|
 
 Docker automatically selects the correct architecture when you pull the image.
 
 ### Image Tags
 
-| Tag            | Description                                                    |
-| -------------- | -------------------------------------------------------------- |
-| `latest`       | Most recent build from the `main` branch.                      |
-| `<commit-sha>` | Exact commit hash for pinpoint rollbacks.                      |
-| `vX.Y.Z`       | Semantic version extracted from `Cargo.toml` (e.g., `v2.3.0`). |
+| Tag      | Description                               |
+| -------- | ----------------------------------------- |
+| `latest` | Most recent build from the `main` branch. |
+
+|
+| `<commit-sha>` | Exact commit hash for pinpoint rollbacks.
+
+|
+| `vX.Y.Z` | Semantic version extracted from `Cargo.toml` (e.g., `v2.3.6`). |
 
 ### Container Registry
 
 - **Registry:** `ghcr.io`
+
 - **Image:** `ghcr.io/bengtfrost/rag-server`
+
 - **Storage:** Free for public repositories.
 
 ### How to Use the Container
@@ -510,7 +573,7 @@ Docker automatically selects the correct architecture when you pull the image.
 docker pull ghcr.io/bengtfrost/rag-server:latest
 
 # Pull a specific version
-docker pull ghcr.io/bengtfrost/rag-server:v2.3.0
+docker pull ghcr.io/bengtfrost/rag-server:v2.3.6
 
 # Run the binary
 docker run --rm ghcr.io/bengtfrost/rag-server:latest --help
@@ -529,11 +592,15 @@ docker manifest inspect ghcr.io/bengtfrost/rag-server:latest
 docker inspect ghcr.io/bengtfrost/rag-server:latest | grep Architecture
 ```
 
-**Status:** [![CI/CD Pipeline](https://github.com/bengtfrost/rag-server/actions/workflows/ci-cd.yml/badge.svg)](https://github.com/bengtfrost/rag-server/actions/workflows/ci-cd.yml)
+**Status:** [](https://www.google.com/search?q=https://github.com/bengtfrost/rag-server/actions/workflows/ci-cd.yml)
 
 ---
 
-**Author:** [Bengt Frost](https://github.com/bengtfrost)\
-**Philosophy:** Native & Lean | Unified Memory | Sovereign AI\
-**License:** MIT\
+**Author:** [Bengt Frost](https://github.com/bengtfrost)
+
+**Philosophy:** Native & Lean | Unified Memory | Sovereign AI
+**License:** MIT
 **Repository:** [github.com/bengtfrost/rag-server](https://github.com/bengtfrost/rag-server)
+
+```
+```
