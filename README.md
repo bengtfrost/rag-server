@@ -448,31 +448,22 @@ Comprehensive testing with real legal documents validated all core features:
 
 | ✅ Single File Ingestion | 7,686-line file → 96 segments in 13 min
 
-|
 | ✅ Pipeline Ingestion | Faster, reliable with large documents
 
-|
 | ✅ Directory Bulk Ingestion | 3 files → 15 segments
 
-|
 | ✅ Mixed Content (TXT + PDF) | 33+ segments
 
-|
 | ✅ Semantic Search | Exact citation retrieval with 97% accuracy
 
-|
 | ✅ Hybrid Search (BM25 + Vector) | Improved recall for keyword-heavy queries
 
-|
 | ✅ Reranker Switching | BGE (Swedish) ↔ Mxbai (English) seamless
 
-|
 | ✅ Query Expansion | LLM-based synonym generation
 
-|
 | ✅ Query Cache | Instant response on repeated queries
 
-|
 | ✅ Document/Collection Deletion | Clean removal
 
 **All critical tests passed.** The server is production-ready for legal, codebase, and technical QA deployments.
@@ -520,10 +511,8 @@ The project is continuously built, tested, and published via GitHub Actions.
 | ---------------- | ------------------------------------------------------------------------------------------------------------------------------- |
 | **Build & Push** | Multi‑stage `Containerfile` based on **Debian Bookworm** (OpenSSL 3). Builds the Rust binary in a container and pushes to GHCR. |
 
-|
 | **Smoke Tests** | Runs basic CLI commands (`--help`, `query --help`, etc.) to verify the image works.
 
-|
 | **Cleanup** | Weekly (Sundays 03:00) cleanup of old images – keeps the 5 latest versions, deletes untagged images.
 
 ### Multi‑Architecture Support
@@ -544,10 +533,8 @@ Docker automatically selects the correct architecture when you pull the image.
 | -------- | ----------------------------------------- |
 | `latest` | Most recent build from the `main` branch. |
 
-|
 | `<commit-sha>` | Exact commit hash for pinpoint rollbacks.
 
-|
 | `vX.Y.Z` | Semantic version extracted from `Cargo.toml` (e.g., `v2.3.6`). |
 
 ### Container Registry
