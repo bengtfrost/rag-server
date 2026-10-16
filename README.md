@@ -442,29 +442,19 @@ By utilizing **Quantization-Aware Training (QAT-UD)** and **N-Gram software spec
 
 Comprehensive testing with real legal documents validated all core features:
 
-| Test                     | Result               |
-| ------------------------ | -------------------- |
-| ✅ Collection Management | Create, list, delete |
-
-| ✅ Single File Ingestion | 7,686-line file → 96 segments in 13 min
-
-| ✅ Pipeline Ingestion | Faster, reliable with large documents
-
-| ✅ Directory Bulk Ingestion | 3 files → 15 segments
-
-| ✅ Mixed Content (TXT + PDF) | 33+ segments
-
-| ✅ Semantic Search | Exact citation retrieval with 97% accuracy
-
-| ✅ Hybrid Search (BM25 + Vector) | Improved recall for keyword-heavy queries
-
-| ✅ Reranker Switching | BGE (Swedish) ↔ Mxbai (English) seamless
-
-| ✅ Query Expansion | LLM-based synonym generation
-
-| ✅ Query Cache | Instant response on repeated queries
-
-| ✅ Document/Collection Deletion | Clean removal
+| Test                             | Result                                     |
+| -------------------------------- | ------------------------------------------ |
+| ✅ Collection Management         | Create, list, delete                       |
+| ✅ Single File Ingestion         | 7,686-line file → 96 segments in 13 min    |
+| ✅ Pipeline Ingestion            | Faster, reliable with large documents      |
+| ✅ Directory Bulk Ingestion      | 3 files → 15 segments                      |
+| ✅ Mixed Content (TXT + PDF)     | 33+ segments                               |
+| ✅ Semantic Search               | Exact citation retrieval with 97% accuracy |
+| ✅ Hybrid Search (BM25 + Vector) | Improved recall for keyword-heavy queries  |
+| ✅ Reranker Switching            | BGE (Swedish) ↔ Mxbai (English) seamless   |
+| ✅ Query Expansion               | LLM-based synonym generation               |
+| ✅ Query Cache                   | Instant response on repeated queries       |
+| ✅ Document/Collection Deletion  | Clean removal                              |
 
 **All critical tests passed.** The server is production-ready for legal, codebase, and technical QA deployments.
 
@@ -510,32 +500,27 @@ The project is continuously built, tested, and published via GitHub Actions.
 | Stage            | Description                                                                                                                     |
 | ---------------- | ------------------------------------------------------------------------------------------------------------------------------- |
 | **Build & Push** | Multi‑stage `Containerfile` based on **Debian Bookworm** (OpenSSL 3). Builds the Rust binary in a container and pushes to GHCR. |
-
-| **Smoke Tests** | Runs basic CLI commands (`--help`, `query --help`, etc.) to verify the image works.
-
-| **Cleanup** | Weekly (Sundays 03:00) cleanup of old images – keeps the 5 latest versions, deletes untagged images.
+| **Smoke Tests**  | Runs basic CLI commands (`--help`, `query --help`, etc.) to verify the image works.                                             |
+| **Cleanup**      | Weekly (Sundays 03:00) cleanup of old images – keeps the 5 latest versions, deletes untagged images.                            |
 
 ### Multi‑Architecture Support
 
 The container image is built for both **amd64** (x86_64) and **arm64** (Apple Silicon, AWS Graviton, Raspberry Pi) architectures.
 
-| Platform  | Use Case                                         |
-| --------- | ------------------------------------------------ |
-| **amd64** | Most servers, desktops, CI/CD runners, cloud VMs |
-
-| **arm64** | Apple Silicon (M1/M2/M3), AWS Graviton, Raspberry Pi, ARM‑based servers
+| Platform  | Use Case                                                                |
+| --------- | ----------------------------------------------------------------------- |
+| **amd64** | Most servers, desktops, CI/CD runners, cloud VMs                        |
+| **arm64** | Apple Silicon (M1/M2/M3), AWS Graviton, Raspberry Pi, ARM‑based servers |
 
 Docker automatically selects the correct architecture when you pull the image.
 
 ### Image Tags
 
-| Tag      | Description                               |
-| -------- | ----------------------------------------- |
-| `latest` | Most recent build from the `main` branch. |
-
-| `<commit-sha>` | Exact commit hash for pinpoint rollbacks.
-
-| `vX.Y.Z` | Semantic version extracted from `Cargo.toml` (e.g., `v2.3.6`). |
+| Tag            | Description                                                    |
+| -------------- | -------------------------------------------------------------- |
+| `latest`       | Most recent build from the `main` branch.                      |
+| `<commit-sha>` | Exact commit hash for pinpoint rollbacks.                      |
+| `vX.Y.Z`       | Semantic version extracted from `Cargo.toml` (e.g., `v2.3.6`). |
 
 ### Container Registry
 
