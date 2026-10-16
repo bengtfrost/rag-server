@@ -446,7 +446,6 @@ Comprehensive testing with real legal documents validated all core features:
 | ------------------------ | -------------------- |
 | ✅ Collection Management | Create, list, delete |
 
-|
 | ✅ Single File Ingestion | 7,686-line file → 96 segments in 13 min
 
 |
@@ -475,8 +474,6 @@ Comprehensive testing with real legal documents validated all core features:
 
 |
 | ✅ Document/Collection Deletion | Clean removal
-
-|
 
 **All critical tests passed.** The server is production-ready for legal, codebase, and technical QA deployments.
 
@@ -529,8 +526,6 @@ The project is continuously built, tested, and published via GitHub Actions.
 |
 | **Cleanup** | Weekly (Sundays 03:00) cleanup of old images – keeps the 5 latest versions, deletes untagged images.
 
-|
-
 ### Multi‑Architecture Support
 
 The container image is built for both **amd64** (x86_64) and **arm64** (Apple Silicon, AWS Graviton, Raspberry Pi) architectures.
@@ -539,10 +534,7 @@ The container image is built for both **amd64** (x86_64) and **arm64** (Apple Si
 | --------- | ------------------------------------------------ |
 | **amd64** | Most servers, desktops, CI/CD runners, cloud VMs |
 
-|
 | **arm64** | Apple Silicon (M1/M2/M3), AWS Graviton, Raspberry Pi, ARM‑based servers
-
-|
 
 Docker automatically selects the correct architecture when you pull the image.
 
@@ -601,6 +593,3 @@ docker inspect ghcr.io/bengtfrost/rag-server:latest | grep Architecture
 **Philosophy:** Native & Lean | Unified Memory | Sovereign AI
 **License:** MIT
 **Repository:** [github.com/bengtfrost/rag-server](https://github.com/bengtfrost/rag-server)
-
-```
-```
