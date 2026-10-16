@@ -563,5 +563,7 @@ docker inspect ghcr.io/bengtfrost/rag-server:latest | grep Architecture
 **Author:** [Bengt Frost](https://github.com/bengtfrost)
 
 **Philosophy:** Native & Lean | Unified Memory | Sovereign AI
+
 **License:** MIT
+
 **Repository:** [github.com/bengtfrost/rag-server](https://github.com/bengtfrost/rag-server)
