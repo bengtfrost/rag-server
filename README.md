@@ -556,8 +556,6 @@ docker manifest inspect ghcr.io/bengtfrost/rag-server:latest
 docker inspect ghcr.io/bengtfrost/rag-server:latest | grep Architecture
 ```
 
-**Status:** [](https://www.google.com/search?q=https://github.com/bengtfrost/rag-server/actions/workflows/ci-cd.yml)
-
 ---
 
 **Author:** [Bengt Frost](https://github.com/bengtfrost)
