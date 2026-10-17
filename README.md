@@ -1,4 +1,4 @@
-🚀 Sovereign RAG MCP Server (Rust)
+🚀 Sovereign RAG MCP Server (Rust) — v2.3.7
 
 > **High-Performance Legal & Code Intelligence for the Terminal.**
 
@@ -75,7 +75,7 @@ sudo xbps-install -y base-devel rust cargo sqlite-devel poppler-utils curl wget 
 # Download the specific vec0.so (v0.1.9+)
 mkdir -p ~/.config/rag-server/extensions
 cd /tmp
-curl -L -O [https://github.com/asg017/sqlite-vec/releases/download/v0.1.9/sqlite-vec-0.1.9-loadable-linux-x86_64.tar.gz](https://github.com/asg017/sqlite-vec/releases/download/v0.1.9/sqlite-vec-0.1.9-loadable-linux-x86_64.tar.gz)
+curl -L -O https://github.com/asg017/sqlite-vec/releases/download/v0.1.9/sqlite-vec-0.1.9-loadable-linux-x86_64.tar.gz
 tar -xvf sqlite-vec-0.1.9-loadable-linux-x86_64.tar.gz
 mv vec0.so ~/.config/rag-server/extensions/
 ```
@@ -85,7 +85,7 @@ mv vec0.so ~/.config/rag-server/extensions/
 Download the BGE-M3 metadata required for exact tokenization.
 
 ```bash
-wget [https://huggingface.co/BAAI/bge-m3/resolve/main/tokenizer.json](https://huggingface.co/BAAI/bge-m3/resolve/main/tokenizer.json) -O ~/.config/rag-server/tokenizer.json
+wget https://huggingface.co/BAAI/bge-m3/resolve/main/tokenizer.json -O ~/.config/rag-server/tokenizer.json
 ```
 
 ### 3. Build the Binary
@@ -93,6 +93,9 @@ wget [https://huggingface.co/BAAI/bge-m3/resolve/main/tokenizer.json](https://hu
 ```bash
 cd ~/.config/rag-server
 cargo build --release
+
+# Optional: build with CPU-specific optimizations (not portable to other machines)
+RUSTFLAGS="-C target-cpu=native" cargo build --release
 ```
 
 ### 4. Migrate Existing Database (for Hybrid Search)
@@ -109,69 +112,48 @@ sqlite3 ~/.config/rag-server/vectors.db "INSERT OR IGNORE INTO docs_fts(rowid, i
 
 The server defaults to optimized values for a 16GB U-series workstation but can be overridden via environment variables.
 
-### Environment Setup (Recommended)
+### Runtime overrides (`~/.config/rag-server/env`)
 
-Create a dedicated environment file for your RAG configuration:
+The compiled-in defaults below are typically overridden by a shell environment file that is sourced before launching the server:
 
 ```bash
 # ~/.config/rag-server/env
-# RAG Server Environment Variables
-
-# Embedding model
 export RAG_EMBED_MODEL="local-llama-server-embed"
-
-# Reranker model (primary or secondary)
 export RAG_RERANK_MODEL="local-llama-server-rerank"
-
-# Reranker URL (derived from RAG_RERANK_MODEL)
-case "$RAG_RERANK_MODEL" in
-    local-llama-server-rerank)
-        export RAG_RERANK_URL="[http://127.0.0.1:11436/rerank](http://127.0.0.1:11436/rerank)"
-        ;;
-    local-llama-server-rerank-2)
-        export RAG_RERANK_URL="[http://127.0.0.1:11437/rerank](http://127.0.0.1:11437/rerank)"
-        ;;
-    *)
-        export RAG_RERANK_URL="[http://127.0.0.1:11436/rerank](http://127.0.0.1:11436/rerank)"  # Fallback
-        ;;
-esac
-
-# Reranking settings
-export RAG_RERANK_CANDIDATES=10
+export RAG_RERANK_URL="http://127.0.0.1:11436/rerank"
+export RAG_RERANK_K=10
 export RAG_RERANK_MIN_CANDIDATES=3
-
-# Concurrency settings
-export RAG_MAX_CONCURRENT=4
+export RAG_MAX_CONCURRENT_FILES=4
 export RAG_MAX_CONCURRENT_REQUESTS=4
-
-# Caching
-export RAG_CACHE_TTL=300
-
-# Database path
-export RAG_DB_PATH="$HOME/.config/rag-server/vectors.db"
 ```
+
+Source it in your shell profile or in the Goose launch wrapper (`_goose_session`). See the full example in the **Goose** section below.
 
 ### Environment Variables Reference
 
-| Variable                      | Default Value                                | Description                                    |
-| ----------------------------- | -------------------------------------------- | ---------------------------------------------- |
-| `SQLITE_VEC_PATH`             | `~/.config/rag-server/extensions/vec0.so`    | Path to the vector extension.                  |
-| `RAG_DB_PATH`                 | `~/.config/rag-server/vectors.db`            | Path to the local Knowledge Base.              |
-| `RAG_TOKENIZER_PATH`          | `~/.config/rag-server/tokenizer.json`        | BGE-M3 BPE dictionary.                         |
-| `RAG_EMBED_URL`               | `http://localhost:11435/v1/embeddings`       | HTTP endpoint for embedding server.            |
-| `RAG_RERANK_URL`              | `http://localhost:11436/rerank`              | HTTP endpoint for reranker server (primary).   |
-| `RAG_LLM_URL`                 | `http://localhost:11434/v1/chat/completions` | HTTP endpoint for LLM query expansion.         |
-| `RAG_CHUNK_SIZE`              | `1024` (Legal) / `3000` (Code)               | Max tokens per segment.                        |
-| `RAG_CHUNK_OVERLAP`           | `150` (Legal) / `400` (Code)                 | Token overlap for context.                     |
-| `RAG_EMBED_MODEL`             | `bge-m3`                                     | Model name sent to the embedder.               |
-| `RAG_RERANK_MODEL`            | `bge-reranker-v2-m3`                         | Model name sent to the reranker.               |
-| `RAG_RERANK_MIN_SCORE`        | `0.3`                                        | Minimum relevance score to keep.               |
-| `RAG_MAX_CONCURRENT_FILES`    | `4`                                          | Parallelism when ingesting directories.        |
-| `RAG_BATCH_SIZE`              | `8`                                          | Embedding batch size for API requests.         |
-| `RAG_RERANK_CANDIDATES`       | `10`                                         | Number of candidates for reranking.            |
-| `RAG_MAX_CONCURRENT_REQUESTS` | `4`                                          | Maximum parallel HTTP requests for embeddings. |
-| `RAG_RERANK_MIN_CANDIDATES`   | `3`                                          | Skip reranking if fewer candidates (adaptive). |
-| `RAG_CACHE_TTL`               | `300`                                        | Query cache TTL in seconds.                    |
+These are the **compiled-in defaults** from `src/config.rs`. Override them via environment variables (e.g., in `~/.config/rag-server/env`).
+
+| Variable                         | Default Value                                | Description                                          |
+| -------------------------------- | -------------------------------------------- | ---------------------------------------------------- |
+| `SQLITE_VEC_PATH`                | `sqlite-vec`                                 | Path to the `sqlite-vec` extension (`.so` / `.dylib`). |
+| `RAG_EMBED_URL`                  | `http://localhost:11435/v1/embeddings`       | HTTP endpoint for embedding server.                  |
+| `RAG_EMBED_MODEL`                | `bge-m3`                                     | Model name sent to the embedder.                     |
+| `RAG_RERANK_URL`                 | `http://localhost:11436/rerank`              | HTTP endpoint for reranker server.                   |
+| `RAG_RERANK_MODEL`               | `bge-reranker-v2-m3`                         | Model name sent to the reranker.                     |
+| `RAG_CHUNK_SIZE`                 | `1024`                                       | Max tokens per segment.                              |
+| `RAG_CHUNK_OVERLAP`              | `150`                                        | Token overlap for context.                           |
+| `RAG_BATCH_SIZE`                 | `8`                                          | Embedding batch size for API requests.               |
+| `RAG_RERANK_K`                   | `15`                                         | Number of ANN candidates retrieved before reranking. |
+| `RAG_RERANK_MIN_SCORE`           | `0.3`                                        | Minimum relevance score to keep.                     |
+| `RAG_MAX_CONCURRENT_FILES`       | `4`                                          | Parallelism when ingesting directories.              |
+| `RAG_MAX_CONCURRENT_REQUESTS`    | *(unset → sequential)*                       | Max parallel HTTP requests for embeddings.           |
+| `RAG_RERANK_MIN_CANDIDATES`      | *(unset → always rerank)*                    | Skip reranking if fewer candidates (adaptive).       |
+
+**Compiled-in paths and settings (not overridable via env in the current version):**
+
+- **Database:** `~/.config/rag-server/vectors.db`
+- **Tokenizer:** `~/.config/rag-server/tokenizer.json`
+- **HTTP timeout:** `14400` seconds (hard-coded)
 
 ---
 
@@ -221,7 +203,7 @@ _ensure_agentgateway() {
         local count=0
         while ! ss -tulpn | grep -q ":4000 "; do
             if [ $count -gt 10 ]; then
-                echo "❌ Fel: Agentgateway hann inte starta."
+                echo "❌ Error: Agentgateway failed to start."
                 return 1
             fi
             sleep 1
@@ -363,7 +345,7 @@ The same binary acts as a full‑featured command‑line tool. Run it without ar
 ./target/release/rag-server query --collection juridik --query "tolkningsregler" --hybrid --vector-weight 0.4 --bm25-weight 0.6
 
 # Specify reranker URL per query
-./target/release/rag-server query --collection juridik --query "constitutional law" --rerank-url [http://127.0.0.1:11437/rerank](http://127.0.0.1:11437/rerank)
+./target/release/rag-server query --collection juridik --query "constitutional law" --rerank-url http://127.0.0.1:11437/rerank
 
 # Bypass cache (force fresh search)
 ./target/release/rag-server query --collection juridik --query "tolkningsregler" --hybrid --no-cache
@@ -390,7 +372,7 @@ The same binary acts as a full‑featured command‑line tool. Run it without ar
       "top_k": { "type": "integer", "default": 5 },
       "rerank_url": {
         "type": "string",
-        "description": "Optional reranker-URL (e.g., [http://127.0.0.1:11437/rerank](http://127.0.0.1:11437/rerank))"
+        "description": "Optional reranker-URL (e.g., http://127.0.0.1:11437/rerank)"
       },
       "hybrid": {
         "type": "boolean",
@@ -458,9 +440,20 @@ Comprehensive testing with real legal documents validated all core features:
 
 **All critical tests passed.** The server is production-ready for legal, codebase, and technical QA deployments.
 
+> Tested against the v2.3 line. The v2.3.7 release only changes dependencies and translations; search and ingestion behaviour is unchanged.
+
 ---
 
 ## 📝 Change Log
+
+### v2.3.7 (2026-10-17)
+
+- **Dependency Refresh:** `rusqlite` 0.32 → 0.40, `reqwest` 0.12 → 0.13, `pdf-extract` 0.6 → 0.12, `tokenizers` 0.21 → 0.23, `dirs` 5 → 7, `dashmap` 6.1 → 6.2.
+- **SQLite Compatibility Fix:** `usize` → `i64` casts in `db.rs` (`search()`, `bm25_search()`, `insert_chunks()`) — required by `rusqlite` 0.40, which removed `ToSql`/`FromSql` for unsigned integers.
+- **TLS Backend Preservation:** Explicit `native-tls` feature on `reqwest` 0.13 to keep the OpenSSL-based TLS stack (0.13 defaults to `rustls`).
+- **Leaner Dependency Graph:** `tokenizers` uses `default-features = false, features = ["fancy-regex"]`, dropping `spm_precompiled`, `base64 0.13`, `nom 7`, `onig`, and `onig_sys`. Duplicated crates: 11 → 6.
+- **Translation:** Swedish logs, comments, tool descriptors, and user-facing strings translated to English. Static Swedish query-expansion keywords in `expander.rs` preserved (they match Swedish user queries).
+- **Version Bump:** `Cargo.toml` and `src/main.rs` `serverInfo.version` → `2.3.7`.
 
 ### v2.3.6 (2026-10-16)
 
@@ -520,7 +513,7 @@ Docker automatically selects the correct architecture when you pull the image.
 | -------------- | -------------------------------------------------------------- |
 | `latest`       | Most recent build from the `main` branch.                      |
 | `<commit-sha>` | Exact commit hash for pinpoint rollbacks.                      |
-| `vX.Y.Z`       | Semantic version extracted from `Cargo.toml` (e.g., `v2.3.6`). |
+| `vX.Y.Z`       | Semantic version extracted from `Cargo.toml` (e.g., `v2.3.7`). |
 
 ### Container Registry
 
@@ -537,7 +530,7 @@ Docker automatically selects the correct architecture when you pull the image.
 docker pull ghcr.io/bengtfrost/rag-server:latest
 
 # Pull a specific version
-docker pull ghcr.io/bengtfrost/rag-server:v2.3.6
+docker pull ghcr.io/bengtfrost/rag-server:v2.3.7
 
 # Run the binary
 docker run --rm ghcr.io/bengtfrost/rag-server:latest --help
@@ -563,5 +556,3 @@ docker inspect ghcr.io/bengtfrost/rag-server:latest | grep Architecture
 **Philosophy:** Native & Lean | Unified Memory | Sovereign AI
 
 **License:** MIT
-
-**Repository:** [github.com/bengtfrost/rag-server](https://github.com/bengtfrost/rag-server)
