@@ -15,13 +15,13 @@ targets = []
 tokio = { version = "1", features = ["full"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-rusqlite = { version = "0.32", features = ["bundled", "load_extension"] }
-reqwest = { version = "0.12", features = ["json", "stream"] }
-tokenizers = "0.21.0"
+rusqlite = { version = "0.40", features = ["bundled", "load_extension"] }
+reqwest = { version = "0.13", features = ["json", "stream", "native-tls"] }
+tokenizers = { version = "0.23", default-features = false, features = ["fancy-regex"] }
 anyhow = "1"
 regex = "1"
-dirs = "5"
-pdf-extract = "0.6"
+dirs = "7"
+pdf-extract = "0.12"
 futures = "0.3"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
@@ -29,5 +29,5 @@ clap = { version = "4", features = ["derive"] }
 # Optimizations
 rayon = "1.10"
 lazy_static = "1.5"
-dashmap = "6.1"
+dashmap = "6.2"
 once_cell = "1.19"

@@ -31,10 +31,10 @@ impl Db {
         )?;
         conn.execute(
             "CREATE TABLE IF NOT EXISTS docs (
-                id TEXT PRIMARY KEY, 
-                collection TEXT, 
-                text TEXT, 
-                parent_id TEXT, 
+                id TEXT PRIMARY KEY,
+                collection TEXT,
+                text TEXT,
+                parent_id TEXT,
                 chunk_index INTEGER
             )",
             [],
@@ -42,8 +42,8 @@ impl Db {
 
         conn.execute(
             "CREATE VIRTUAL TABLE IF NOT EXISTS vectors USING vec0(
-                id TEXT PRIMARY KEY, 
-                collection TEXT, 
+                id TEXT PRIMARY KEY,
+                collection TEXT,
                 embedding FLOAT[1024]
             )",
             [],
@@ -145,9 +145,9 @@ impl Db {
 
     pub fn list_collections(&self) -> Result<Vec<(String, i64)>> {
         let mut stmt = self.conn.prepare(
-            "SELECT c.name, COUNT(DISTINCT d.parent_id) 
-             FROM collections c 
-             LEFT JOIN docs d ON c.name = d.collection 
+            "SELECT c.name, COUNT(DISTINCT d.parent_id)
+             FROM collections c
+             LEFT JOIN docs d ON c.name = d.collection
              GROUP BY c.name",
         )?;
         let rows = stmt.query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?;
@@ -201,7 +201,7 @@ impl Db {
 
             tx.execute(
                 "INSERT INTO docs (id, collection, text, parent_id, chunk_index) VALUES (?1, ?2, ?3, ?4, ?5)",
-                params![chunk_id, coll, text, parent_id, i],
+                params![chunk_id, coll, text, parent_id, i as i64], // i 是 usize，显式转换为 i64
             )?;
 
             tx.execute(
@@ -263,13 +263,14 @@ impl Db {
         let emb_json = serde_json::to_string(&emb)?;
 
         let mut stmt = self.conn.prepare(
-            "SELECT v.id, d.text, v.distance 
-             FROM vectors v 
-             JOIN docs d ON v.id = d.id 
+            "SELECT v.id, d.text, v.distance
+             FROM vectors v
+             JOIN docs d ON v.id = d.id
              WHERE v.collection = ?1 AND v.embedding MATCH ?2 AND k = ?3",
         )?;
 
-        let rows = stmt.query_map(params![coll, emb_json, k], |row| {
+        // k 是 usize，rusqlite 0.40 不再为 usize 实现 ToSql，必须转为 i64
+        let rows = stmt.query_map(params![coll, emb_json, k as i64], |row| {
             Ok((row.get(0)?, row.get(1)?, row.get(2)?))
         })?;
 
@@ -289,7 +290,8 @@ impl Db {
              LIMIT ?3",
         )?;
 
-        let rows = stmt.query_map(params![query, coll, k], |row| {
+        // k 是 usize，需要转为 i64
+        let rows = stmt.query_map(params![query, coll, k as i64], |row| {
             Ok((row.get(0)?, row.get(1)?))
         })?;
 
