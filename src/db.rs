@@ -201,7 +201,7 @@ impl Db {
 
             tx.execute(
                 "INSERT INTO docs (id, collection, text, parent_id, chunk_index) VALUES (?1, ?2, ?3, ?4, ?5)",
-                params![chunk_id, coll, text, parent_id, i as i64], // i 是 usize，显式转换为 i64
+                params![chunk_id, coll, text, parent_id, i as i64], // i is usize, explicitly converted to i64)
             )?;
 
             tx.execute(
@@ -269,7 +269,7 @@ impl Db {
              WHERE v.collection = ?1 AND v.embedding MATCH ?2 AND k = ?3",
         )?;
 
-        // k 是 usize，rusqlite 0.40 不再为 usize 实现 ToSql，必须转为 i64
+        // k is usize; rusqlite 0.40 no longer implements ToSql for usize, so it must be cast to i64)
         let rows = stmt.query_map(params![coll, emb_json, k as i64], |row| {
             Ok((row.get(0)?, row.get(1)?, row.get(2)?))
         })?;
