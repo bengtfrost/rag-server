@@ -290,7 +290,7 @@ impl Db {
              LIMIT ?3",
         )?;
 
-        // k 是 usize，需要转为 i64
+        // // k is usize, needs to be cast to i64)
         let rows = stmt.query_map(params![query, coll, k as i64], |row| {
             Ok((row.get(0)?, row.get(1)?))
         })?;
