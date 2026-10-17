@@ -24,7 +24,7 @@ use crate::tools::*;
 #[derive(Parser)]
 #[command(name = "rag-server")]
 #[command(about = "Sovereign Rust RAG Server with local embedding and reranking")]
-#[command(version = "2.3.6")]
+#[command(version = "2.3.7")]
 struct Cli {
     #[command(subcommand)]
     command: Option<Commands>,
