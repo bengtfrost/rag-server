@@ -62,24 +62,23 @@ pub async fn query(
 
     debug!("Fetching {} ANN candidates...", cfg.rerank_candidates);
 
-    // Build cache key
+    // Cache key includes the embedding model so swapping models invalidates.
     let cache_key = format!(
-        "{}:{}:{}:{}:{}:{}",
+        "{}:{}:{}:{}:{}:{}:{}",
         args.collection,
         optimized_query,
         args.hybrid,
         args.vector_weight,
         args.bm25_weight,
-        cfg.rerank_candidates
+        cfg.rerank_candidates,
+        cfg.embed_model
     );
 
     let chunk_ids: Vec<String> = if !args.no_cache {
-        // Try cache first
         if let Some(cached) = QUERY_CACHE.get(&cache_key) {
             debug!("Cache hit for query");
             cached.as_ref().clone()
         } else {
-            // Run search and cache
             let results = run_search(db, cfg, &args, query_emb, &optimized_query).await?;
             QUERY_CACHE.insert(cache_key, results.clone());
             results
@@ -93,9 +92,10 @@ pub async fn query(
     }
 
     debug!("{} candidates fetched, fetching text...", chunk_ids.len());
-    let db_guard = db.lock().await;
-    let doc_map = db_guard.get_chunk_texts(&chunk_ids)?;
-    drop(db_guard);
+    let doc_map = {
+        let db_guard = db.lock().await;
+        db_guard.get_chunk_texts(&chunk_ids)?
+    };
 
     let doc_texts: Vec<String> = doc_map.iter().map(|(_, text, _)| text.clone()).collect();
 
@@ -152,18 +152,18 @@ async fn run_search(
             "Using hybrid search with weights {} / {}",
             args.vector_weight, args.bm25_weight
         );
-        // Use the asynchronous version of hybrid_search
-        let results = db_guard
-            .hybrid_search_async(
+        db_guard
+            .hybrid_search(
                 &args.collection,
                 query_emb.clone(),
                 optimized_query,
                 cfg.rerank_candidates * 2,
                 args.vector_weight,
                 args.bm25_weight,
-            )
-            .await?;
-        results.iter().map(|(id, _, _)| id.clone()).collect()
+            )?
+            .into_iter()
+            .map(|(id, _, _)| id)
+            .collect()
     } else {
         db_guard
             .search(&args.collection, query_emb.clone(), cfg.rerank_candidates)?
@@ -172,7 +172,6 @@ async fn run_search(
             .collect()
     };
 
-    drop(db_guard);
     Ok(chunk_ids)
 }
 

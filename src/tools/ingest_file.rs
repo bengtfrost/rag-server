@@ -10,7 +10,6 @@ use crate::config::Config;
 use crate::db::Db;
 use crate::embedder::get_embeddings;
 use crate::extractor::extract_text_from_file;
-use crate::pipeline::IngestionPipeline;
 
 #[derive(Debug, Deserialize, Args)]
 pub struct IngestFileArgs {
@@ -27,10 +26,6 @@ pub struct IngestFileArgs {
     #[arg(short, long)]
     #[serde(default)]
     pub force: bool,
-    // NEW: use pipeline optimization
-    #[arg(long)]
-    #[serde(default)]
-    pub pipeline: bool,
 }
 
 fn default_encoding() -> String {
@@ -66,55 +61,35 @@ pub async fn ingest_file(
         doc_id
     );
 
-    let db_guard = db.lock().await;
-    db_guard.insert_collection(&args.collection)?;
-
-    if db_guard.doc_exists(&args.collection, &doc_id)? && !args.force {
-        return Ok(format!(
-            "Warning: '{}' is already indexed in '{}'. No changes made.",
-            doc_id, args.collection
-        ));
+    {
+        let db_guard = db.lock().await;
+        db_guard.insert_collection(&args.collection)?;
+        if db_guard.doc_exists(&args.collection, &doc_id)? && !args.force {
+            return Ok(format!(
+                "Warning: '{}' is already indexed in '{}'. No changes made.",
+                doc_id, args.collection
+            ));
+        }
     }
-    drop(db_guard);
 
     let t0 = Instant::now();
 
-    let (chunks, embeddings) = if args.pipeline {
-        // Use optimized pipeline
-        debug!("Using pipeline optimization for ingestion");
-        let pipeline = IngestionPipeline::new(cfg, client.clone())?;
-        let chunks = pipeline
-            .process(&text, &args.collection, &doc_id, args.force)
-            .await?;
-        let embeddings = get_embeddings(client, cfg, &chunks, &doc_id).await?;
-        (chunks, embeddings)
-    } else {
-        // Traditional method
-        let chunks = chunk_text_exact(
-            &text,
-            cfg.chunk_size,
-            cfg.chunk_overlap,
-            &cfg.tokenizer_path,
-        )?;
-        if chunks.is_empty() {
-            return Ok("No text to index.".to_string());
-        }
-        let embeddings = get_embeddings(client, cfg, &chunks, &doc_id).await?;
-        (chunks, embeddings)
-    };
-
+    let chunks = chunk_text_exact(
+        &text,
+        cfg.chunk_size,
+        cfg.chunk_overlap,
+        &cfg.tokenizer_path,
+    )?;
     if chunks.is_empty() {
         return Ok("No text to index.".to_string());
     }
 
-    let mut db_guard = db.lock().await;
-    db_guard.insert_chunks(
-        &args.collection,
-        &doc_id,
-        chunks.clone(),
-        embeddings.clone(),
-    )?;
-    drop(db_guard);
+    let embeddings = get_embeddings(client, cfg, &chunks, &doc_id).await?;
+
+    {
+        let mut db_guard = db.lock().await;
+        db_guard.insert_chunks(&args.collection, &doc_id, &chunks, &embeddings)?;
+    }
 
     let elapsed = t0.elapsed();
     let action = if args.force { "Re-indexed" } else { "Indexed" };

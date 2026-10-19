@@ -16,11 +16,10 @@ pub mod list_collections;
 pub mod query;
 
 pub use create_collection::CreateCollectionArgs;
-pub use ingest_directory::IngestDirectoryArgs;
-pub use ingest_file::IngestFileArgs;
-// pub use add_documents::AddDocumentsArgs; // Commented if unused
 pub use delete_collection::DeleteCollectionArgs;
 pub use delete_documents::DeleteDocumentsArgs;
+pub use ingest_directory::IngestDirectoryArgs;
+pub use ingest_file::IngestFileArgs;
 pub use query::QueryArgs;
 
 pub fn list_tools() -> Vec<serde_json::Value> {
@@ -30,9 +29,7 @@ pub fn list_tools() -> Vec<serde_json::Value> {
             "Create a new RAG collection",
             json!({
                 "type": "object",
-                "properties": {
-                    "name": {"type": "string"}
-                },
+                "properties": { "name": {"type": "string"} },
                 "required": ["name"]
             }),
         ),
@@ -47,7 +44,6 @@ pub fn list_tools() -> Vec<serde_json::Value> {
                     "document_id": {"type": "string"},
                     "encoding": {"type": "string"},
                     "force": {"type": "boolean"},
-                    "pipeline": {"type": "boolean", "description": "Use pipeline optimization"}
                 },
                 "required": ["collection", "file_path"]
             }),
@@ -90,11 +86,11 @@ pub fn list_tools() -> Vec<serde_json::Value> {
                     "collection": {"type": "string"},
                     "query": {"type": "string"},
                     "top_k": {"type": "integer", "default": 5},
-                    "rerank_url": {"type": "string", "description": "Optional reranker URL"},
-                    "hybrid": {"type": "boolean", "description": "Use hybrid search", "default": false},
-                    "vector_weight": {"type": "number", "description": "Weight for vector score (0-1)", "default": 0.7},
-                    "bm25_weight": {"type": "number", "description": "Weight for BM25 score (0-1)", "default": 0.3},
-                    "no_cache": {"type": "boolean", "description": "Skip cache", "default": false}
+                    "rerank_url": {"type": "string"},
+                    "hybrid": {"type": "boolean", "default": false},
+                    "vector_weight": {"type": "number", "default": 0.7},
+                    "bm25_weight": {"type": "number", "default": 0.3},
+                    "no_cache": {"type": "boolean", "default": false}
                 },
                 "required": ["collection", "query"]
             }),
@@ -121,9 +117,7 @@ pub fn list_tools() -> Vec<serde_json::Value> {
             "Delete an entire collection including all documents, chunks, and metadata.",
             json!({
                 "type": "object",
-                "properties": {
-                    "name": {"type": "string"}
-                },
+                "properties": { "name": {"type": "string"} },
                 "required": ["name"]
             }),
         ),
@@ -157,38 +151,48 @@ pub async fn call_tool(
     match name {
         "create_collection" => {
             let args: create_collection::CreateCollectionArgs = serde_json::from_value(args)
-                .map_err(|e| anyhow::anyhow!("Invalid arguments for 'create_collection'. Expected {{ name: string }}. Error: {}", e))?;
+                .map_err(|e| anyhow::anyhow!(
+                    "Invalid arguments for 'create_collection'. Expected {{ name: string }}. Error: {}", e))?;
             create_collection::create_collection(db, args).await
         }
         "ingest_file" => {
-            let args: ingest_file::IngestFileArgs = serde_json::from_value(args)
-                .map_err(|e| anyhow::anyhow!("Invalid arguments for 'ingest_file'. Expected fields: collection, file_path (optional: document_id, encoding, force, pipeline). Error: {}", e))?;
+            let args: ingest_file::IngestFileArgs = serde_json::from_value(args).map_err(|e| {
+                anyhow::anyhow!("Invalid arguments for 'ingest_file'. Error: {}", e)
+            })?;
             ingest_file::ingest_file(db, cfg, client, args).await
         }
         "ingest_directory" => {
             let args: ingest_directory::IngestDirectoryArgs = serde_json::from_value(args)
-                .map_err(|e| anyhow::anyhow!("Invalid arguments for 'ingest_directory'. Expected fields: collection, directory_path (optional: file_extensions, encoding, force). Error: {}", e))?;
+                .map_err(|e| {
+                    anyhow::anyhow!("Invalid arguments for 'ingest_directory'. Error: {}", e)
+                })?;
             ingest_directory::ingest_directory(db, cfg, client, args).await
         }
         "add_documents" => {
-            let args: add_documents::AddDocumentsArgs = serde_json::from_value(args)
-                .map_err(|e| anyhow::anyhow!("Invalid arguments for 'add_documents'. Expected fields: collection, ids (array), documents (array), force (bool). Error: {}", e))?;
+            let args: add_documents::AddDocumentsArgs =
+                serde_json::from_value(args).map_err(|e| {
+                    anyhow::anyhow!("Invalid arguments for 'add_documents'. Error: {}", e)
+                })?;
             add_documents::add_documents(db, cfg, client, args).await
         }
         "query" => {
             let args: query::QueryArgs = serde_json::from_value(args)
-                .map_err(|e| anyhow::anyhow!("Invalid arguments for 'query'. Expected fields: collection, query (optional: top_k, rerank_url, hybrid, vector_weight, bm25_weight, no_cache). Error: {}", e))?;
+                .map_err(|e| anyhow::anyhow!("Invalid arguments for 'query'. Error: {}", e))?;
             query::query(db, cfg, client, args).await
         }
         "list_collections" => list_collections::list_collections(db).await,
         "delete_documents" => {
             let args: delete_documents::DeleteDocumentsArgs = serde_json::from_value(args)
-                .map_err(|e| anyhow::anyhow!("Invalid arguments for 'delete_documents'. Expected fields: collection, ids (array). Error: {}", e))?;
+                .map_err(|e| {
+                    anyhow::anyhow!("Invalid arguments for 'delete_documents'. Error: {}", e)
+                })?;
             delete_documents::delete_documents(db, args).await
         }
         "delete_collection" => {
             let args: delete_collection::DeleteCollectionArgs = serde_json::from_value(args)
-                .map_err(|e| anyhow::anyhow!("Invalid arguments for 'delete_collection'. Expected {{ name: string }}. Error: {}", e))?;
+                .map_err(|e| {
+                    anyhow::anyhow!("Invalid arguments for 'delete_collection'. Error: {}", e)
+                })?;
             delete_collection::delete_collection(db, args).await
         }
         "clear_cache" => {

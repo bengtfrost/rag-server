@@ -1,7 +1,6 @@
 use anyhow::Result;
 use rusqlite::{Connection, params};
 use std::collections::HashMap;
-use std::env;
 
 pub struct Db {
     conn: Connection,
@@ -9,15 +8,14 @@ pub struct Db {
 
 impl Db {
     pub fn new(path: &str) -> Result<Self> {
-        // Open with connection pooling settings
         let conn = Connection::open_with_flags(
             path,
             rusqlite::OpenFlags::SQLITE_OPEN_READ_WRITE
                 | rusqlite::OpenFlags::SQLITE_OPEN_CREATE
-                | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX, // Enable multi-threading
+                | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX,
         )?;
 
-        let ext_path = env::var("SQLITE_VEC_PATH").unwrap_or_else(|_| "vec0".to_string());
+        let ext_path = std::env::var("SQLITE_VEC_PATH").unwrap_or_else(|_| "vec0".to_string());
 
         unsafe {
             conn.load_extension_enable()?;
@@ -39,6 +37,10 @@ impl Db {
             )",
             [],
         )?;
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_docs_parent ON docs(collection, parent_id)",
+            [],
+        )?;
 
         conn.execute(
             "CREATE VIRTUAL TABLE IF NOT EXISTS vectors USING vec0(
@@ -49,7 +51,6 @@ impl Db {
             [],
         )?;
 
-        // FTS5 for hybrid search
         conn.execute(
             "CREATE VIRTUAL TABLE IF NOT EXISTS docs_fts USING fts5(
                 id UNINDEXED,
@@ -68,14 +69,12 @@ impl Db {
             END",
             [],
         )?;
-
         conn.execute(
             "CREATE TRIGGER IF NOT EXISTS docs_ad AFTER DELETE ON docs BEGIN
                 DELETE FROM docs_fts WHERE rowid = old.rowid;
             END",
             [],
         )?;
-
         conn.execute(
             "CREATE TRIGGER IF NOT EXISTS docs_au AFTER UPDATE ON docs BEGIN
                 DELETE FROM docs_fts WHERE rowid = old.rowid;
@@ -169,16 +168,40 @@ impl Db {
         Ok(count > 0)
     }
 
+    /// Batch existence check — avoids one DB round-trip per id.
+    pub fn existing_doc_ids(
+        &self,
+        collection: &str,
+        ids: &[String],
+    ) -> Result<std::collections::HashSet<String>> {
+        use std::collections::HashSet;
+        if ids.is_empty() {
+            return Ok(HashSet::new());
+        }
+        let ph = ids.iter().map(|_| "?").collect::<Vec<_>>().join(",");
+        let sql = format!(
+            "SELECT DISTINCT parent_id FROM docs WHERE collection = ? AND parent_id IN ({})",
+            ph
+        );
+        let mut stmt = self.conn.prepare(&sql)?;
+        let mut params_vec: Vec<&dyn rusqlite::ToSql> = Vec::with_capacity(ids.len() + 1);
+        params_vec.push(&collection);
+        for id in ids {
+            params_vec.push(id);
+        }
+        let rows = stmt.query_map(rusqlite::params_from_iter(params_vec), |r| {
+            r.get::<_, String>(0)
+        })?;
+        let mut set = HashSet::new();
+        for r in rows {
+            set.insert(r?);
+        }
+        Ok(set)
+    }
+
     pub fn delete_documents(&self, collection: &str, doc_ids: &[String]) -> Result<()> {
         for doc_id in doc_ids {
-            self.conn.execute(
-                "DELETE FROM docs WHERE collection = ? AND parent_id = ?",
-                params![collection, doc_id],
-            )?;
-            self.conn.execute(
-                "DELETE FROM vectors WHERE collection = ? AND id LIKE ?",
-                params![collection, format!("{}%", doc_id)],
-            )?;
+            delete_doc_chunks(&self.conn, collection, doc_id)?;
         }
         Ok(())
     }
@@ -189,26 +212,11 @@ impl Db {
         &mut self,
         coll: &str,
         parent_id: &str,
-        chunks: Vec<String>,
-        embs: Vec<Vec<f32>>,
+        chunks: &[String],
+        embs: &[Vec<f32>],
     ) -> Result<()> {
         let tx = self.conn.transaction()?;
-        for (i, (text, emb)) in chunks.into_iter().zip(embs.into_iter()).enumerate() {
-            let chunk_id = format!("{}_ch{}", parent_id, i);
-            let emb_json = serde_json::to_string(&emb)?;
-
-            tx.execute("DELETE FROM docs WHERE id = ?", [&chunk_id])?;
-
-            tx.execute(
-                "INSERT INTO docs (id, collection, text, parent_id, chunk_index) VALUES (?1, ?2, ?3, ?4, ?5)",
-                params![chunk_id, coll, text, parent_id, i as i64], // i is usize, explicitly converted to i64)
-            )?;
-
-            tx.execute(
-                "INSERT OR REPLACE INTO vectors (id, collection, embedding) VALUES (?1, ?2, ?3)",
-                params![chunk_id, coll, emb_json],
-            )?;
-        }
+        Self::insert_chunks_inner(&tx, coll, parent_id, chunks, embs)?;
         tx.commit()?;
         Ok(())
     }
@@ -218,16 +226,45 @@ impl Db {
         collection: &str,
         data: &[(String, Vec<String>, Vec<Vec<f32>>)],
     ) -> Result<()> {
+        let tx = self.conn.transaction()?;
         for (doc_id, chunks, embs) in data {
-            self.conn.execute(
-                "DELETE FROM docs WHERE collection = ? AND parent_id = ?",
-                params![collection, doc_id],
+            Self::insert_chunks_inner(&tx, collection, doc_id, chunks, embs)?;
+        }
+        tx.commit()?;
+        Ok(())
+    }
+
+    fn insert_chunks_inner(
+        conn: &rusqlite::Connection,
+        collection: &str,
+        parent_id: &str,
+        chunks: &[String],
+        embs: &[Vec<f32>],
+    ) -> Result<()> {
+        if chunks.len() != embs.len() {
+            anyhow::bail!(
+                "chunks/embeddings length mismatch: {} vs {}",
+                chunks.len(),
+                embs.len()
+            );
+        }
+
+        // Delete *all* existing chunks for this parent first so re-indexing with a
+        // smaller chunk count cannot leave orphans behind.
+        delete_doc_chunks(conn, collection, parent_id)?;
+
+        for (i, (text, emb)) in chunks.iter().zip(embs.iter()).enumerate() {
+            let chunk_id = format!("{}_ch{}", parent_id, i);
+            let emb_json = serde_json::to_string(emb)?;
+            conn.execute(
+                "INSERT INTO docs (id, collection, text, parent_id, chunk_index) \
+                 VALUES (?1, ?2, ?3, ?4, ?5)",
+                params![chunk_id, collection, text, parent_id, i as i64],
             )?;
-            self.conn.execute(
-                "DELETE FROM vectors WHERE collection = ? AND id LIKE ?",
-                params![collection, format!("{}%", doc_id)],
+            conn.execute(
+                "INSERT INTO vectors (id, collection, embedding) VALUES (?1, ?2, ?3)",
+                params![chunk_id, collection, emb_json],
             )?;
-            self.insert_chunks(collection, doc_id, chunks.clone(), embs.clone())?;
         }
         Ok(())
     }
@@ -269,7 +306,6 @@ impl Db {
              WHERE v.collection = ?1 AND v.embedding MATCH ?2 AND k = ?3",
         )?;
 
-        // k is usize; rusqlite 0.40 no longer implements ToSql for usize, so it must be cast to i64)
         let rows = stmt.query_map(params![coll, emb_json, k as i64], |row| {
             Ok((row.get(0)?, row.get(1)?, row.get(2)?))
         })?;
@@ -290,7 +326,6 @@ impl Db {
              LIMIT ?3",
         )?;
 
-        // // k is usize, needs to be cast to i64)
         let rows = stmt.query_map(params![query, coll, k as i64], |row| {
             Ok((row.get(0)?, row.get(1)?))
         })?;
@@ -304,7 +339,7 @@ impl Db {
 
     // ===== HYBRID SEARCH =====
 
-    pub async fn hybrid_search_async(
+    pub fn hybrid_search(
         &self,
         coll: &str,
         emb: Vec<f32>,
@@ -313,8 +348,7 @@ impl Db {
         vector_weight: f64,
         bm25_weight: f64,
     ) -> Result<Vec<(String, String, f64)>> {
-        // Run searches directly (no parallel tasks for simplicity; we already have the methods)
-        let vector_results = self.search(coll, emb.clone(), k * 2)?;
+        let vector_results = self.search(coll, emb, k * 2)?;
         let bm25_results = self.bm25_search(coll, query_text, k * 2)?;
 
         let vector_scores: Vec<(String, f64)> = vector_results
@@ -322,7 +356,6 @@ impl Db {
             .map(|(id, _, score)| (id.clone(), *score as f64))
             .collect();
         let vector_norm = Self::normalize_scores(&vector_scores);
-
         let bm25_norm = Self::normalize_scores(&bm25_results);
 
         let mut combined: HashMap<String, (f64, f64)> = HashMap::new();
@@ -335,10 +368,7 @@ impl Db {
 
         let mut scored_ids: Vec<(String, f64)> = combined
             .into_iter()
-            .map(|(id, (v_score, b_score))| {
-                let combined_score = v_score * vector_weight + b_score * bm25_weight;
-                (id, combined_score)
-            })
+            .map(|(id, (v_score, b_score))| (id, v_score * vector_weight + b_score * bm25_weight))
             .collect();
 
         scored_ids.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
@@ -382,4 +412,29 @@ impl Db {
             .map(|(id, s)| (id.clone(), (s - min_score) / range))
             .collect()
     }
+}
+
+/// Delete every chunk belonging to `doc_id` in `collection`.
+///
+/// Uses exact chunk IDs derived from `docs.parent_id` rather than `LIKE 'doc%'`
+/// so a doc named `test` cannot accidentally delete a doc named `testing`.
+fn delete_doc_chunks(conn: &rusqlite::Connection, collection: &str, doc_id: &str) -> Result<()> {
+    let old_ids: Vec<String> = {
+        let mut stmt =
+            conn.prepare("SELECT id FROM docs WHERE collection = ? AND parent_id = ?")?;
+        let rows = stmt.query_map(params![collection, doc_id], |r| r.get::<_, String>(0))?;
+        rows.collect::<Result<_, _>>()?
+    };
+    if !old_ids.is_empty() {
+        let ph = old_ids.iter().map(|_| "?").collect::<Vec<_>>().join(",");
+        let sql = format!("DELETE FROM vectors WHERE id IN ({})", ph);
+        let param_refs: Vec<&dyn rusqlite::ToSql> =
+            old_ids.iter().map(|s| s as &dyn rusqlite::ToSql).collect();
+        conn.execute(&sql, rusqlite::params_from_iter(param_refs))?;
+    }
+    conn.execute(
+        "DELETE FROM docs WHERE collection = ? AND parent_id = ?",
+        params![collection, doc_id],
+    )?;
+    Ok(())
 }

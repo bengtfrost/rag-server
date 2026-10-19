@@ -83,7 +83,7 @@ pub async fn get_embeddings(
     });
 
     let batch_results: Vec<Vec<Vec<f32>>> = stream::iter(batch_futures)
-        .buffer_unordered(max_concurrent)
+        .buffered(max_concurrent) // ← was buffer_unordered
         .collect::<Vec<Result<Vec<Vec<f32>>, anyhow::Error>>>()
         .await
         .into_iter()
@@ -101,4 +101,3 @@ fn progress_bar(pct: f64, width: usize) -> String {
     let bar: String = "█".repeat(filled) + &"░".repeat(width - filled);
     format!("[{}] {:.0}%", bar, pct * 100.0)
 }
-

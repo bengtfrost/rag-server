@@ -1,6 +1,6 @@
 [package]
 name = "rag-server-mcp"
-version = "2.3.7"
+version = "2.4.0"
 edition = "2024"
 rust-version = "1.99"
 description = "Sovereign, high-performance RAG MCP server written in Rust for local code and legal search."
@@ -17,7 +17,9 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 rusqlite = { version = "0.40", features = ["bundled", "load_extension"] }
 reqwest = { version = "0.13", features = ["json", "stream", "native-tls"] }
-tokenizers = { version = "0.23", default-features = false, features = ["fancy-regex"] }
+tokenizers = { version = "0.23", default-features = false, features = [
+  "fancy-regex",
+] }
 anyhow = "1"
 regex = "1"
 dirs = "7"

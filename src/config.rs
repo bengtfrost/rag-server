@@ -1,4 +1,5 @@
 use anyhow::Result;
+use dirs::config_dir;
 use std::env;
 use std::path::PathBuf;
 
@@ -23,15 +24,27 @@ pub struct Config {
 
 impl Config {
     pub fn from_env() -> Result<Self> {
-        let base_dir = PathBuf::from("~/.config/rag-server");
+        // Use the proper OS config dir — `PathBuf::from("~...")` does NOT expand tilde.
+        let base_dir = config_dir()
+            .ok_or_else(|| anyhow::anyhow!("Could not determine config directory"))?
+            .join("rag-server");
         std::fs::create_dir_all(&base_dir)?;
 
+        // Honour RAG_DB_PATH / RAG_TOKENIZER_PATH if set (previously ignored).
+        let db_path = env::var("RAG_DB_PATH")
+            .map(PathBuf::from)
+            .unwrap_or_else(|_| base_dir.join("vectors.db"))
+            .to_string_lossy()
+            .into_owned();
+        let tokenizer_path = env::var("RAG_TOKENIZER_PATH")
+            .map(PathBuf::from)
+            .unwrap_or_else(|_| base_dir.join("tokenizer.json"))
+            .to_string_lossy()
+            .into_owned();
+
         Ok(Self {
-            db_path: base_dir.join("vectors.db").to_string_lossy().into_owned(),
-            tokenizer_path: base_dir
-                .join("tokenizer.json")
-                .to_string_lossy()
-                .into_owned(),
+            db_path,
+            tokenizer_path,
             embed_url: env::var("RAG_EMBED_URL")
                 .unwrap_or_else(|_| "http://localhost:11435/v1/embeddings".to_string()),
             rerank_url: env::var("RAG_RERANK_URL")

@@ -88,17 +88,28 @@ pub async fn ingest_directory(
         dir_path,
         args.force
     );
-    let db_guard = db.lock().await;
-    db_guard.insert_collection(&args.collection)?;
-    drop(db_guard);
+    {
+        let db_guard = db.lock().await;
+        db_guard.insert_collection(&args.collection)?;
+    }
 
+    // Use the *absolute path* (lowercased) as doc_id — same scheme as ingest_file.
+    // This avoids collisions between README.md vs readme.md and between
+    // different directories sharing a filename.
+    //
+    // `fp` is only needed while building this vector; the pushed tuple does
+    // not carry it, so we avoid a per-file PathBuf clone that would be dead.
     let mut prepared = Vec::new();
     for fp in &files {
-        let doc_id = std::path::Path::new(fp)
+        let display_name = std::path::Path::new(fp)
             .file_name()
             .unwrap_or_default()
             .to_string_lossy()
-            .to_lowercase();
+            .to_string();
+        let abs =
+            std::path::absolute(fp).unwrap_or_else(|_| std::path::Path::new(fp).to_path_buf());
+        let doc_id = abs.to_string_lossy().to_lowercase();
+
         match extract_text_from_file(fp, Some(&args.encoding)) {
             Ok(text) => match chunk_text_exact(
                 &text,
@@ -109,37 +120,20 @@ pub async fn ingest_directory(
                 Ok(chunks) => {
                     debug!(
                         "  Chunked: '{}' (doc_id='{}') → {} chunks",
-                        std::path::Path::new(fp)
-                            .file_name()
-                            .unwrap_or_default()
-                            .to_string_lossy(),
+                        display_name,
                         doc_id,
                         chunks.len()
                     );
-                    prepared.push((fp.clone(), doc_id, chunks, None));
+                    prepared.push((display_name, doc_id, chunks, None));
                 }
                 Err(e) => {
-                    debug!(
-                        "  Error chunking '{}': {}",
-                        std::path::Path::new(fp)
-                            .file_name()
-                            .unwrap_or_default()
-                            .to_string_lossy(),
-                        e
-                    );
-                    prepared.push((fp.clone(), doc_id, Vec::new(), Some(e.to_string())));
+                    debug!("  Error chunking '{}': {}", display_name, e);
+                    prepared.push((display_name, doc_id, Vec::new(), Some(e.to_string())));
                 }
             },
             Err(e) => {
-                debug!(
-                    "  Error reading '{}': {}",
-                    std::path::Path::new(fp)
-                        .file_name()
-                        .unwrap_or_default()
-                        .to_string_lossy(),
-                    e
-                );
-                prepared.push((fp.clone(), doc_id, Vec::new(), Some(e.to_string())));
+                debug!("  Error reading '{}': {}", display_name, e);
+                prepared.push((display_name, doc_id, Vec::new(), Some(e.to_string())));
             }
         }
     }
@@ -148,65 +142,38 @@ pub async fn ingest_directory(
     let mut tasks: Vec<tokio::task::JoinHandle<anyhow::Result<(String, usize, String)>>> =
         Vec::new();
 
-    for (fp, doc_id, chunks, err) in prepared {
+    for (display_name, doc_id, chunks, err) in prepared {
         let db = Arc::clone(db);
         let cfg = cfg.clone();
         let client = client.clone();
         let sem = Arc::clone(&sem);
         let collection = args.collection.clone();
         let force = args.force;
-        // Acquire a permit before spawning, limiting concurrency
         let permit = sem.clone().acquire_owned().await.unwrap();
         tasks.push(tokio::spawn(async move {
-            let _permit = permit; // held until the task ends
+            let _permit = permit;
             if let Some(e) = err {
-                return Ok((
-                    std::path::Path::new(&fp)
-                        .file_name()
-                        .unwrap_or_default()
-                        .to_string_lossy()
-                        .to_string(),
-                    0,
-                    format!("error – {}", e),
-                ));
+                return Ok((display_name, 0, format!("error – {}", e)));
             }
             if chunks.is_empty() {
-                return Ok((
-                    std::path::Path::new(&fp)
-                        .file_name()
-                        .unwrap_or_default()
-                        .to_string_lossy()
-                        .to_string(),
-                    0,
-                    "empty file".to_string(),
-                ));
+                return Ok((display_name, 0, "empty file".to_string()));
             }
-            let db_guard = db.lock().await;
-            if db_guard.doc_exists(&collection, &doc_id)? && !force {
-                return Ok((
-                    std::path::Path::new(&fp)
-                        .file_name()
-                        .unwrap_or_default()
-                        .to_string_lossy()
-                        .to_string(),
-                    0,
-                    "already indexed".to_string(),
-                ));
+            {
+                let db_guard = db.lock().await;
+                if db_guard.doc_exists(&collection, &doc_id)? && !force {
+                    return Ok((display_name, 0, "already indexed".to_string()));
+                }
             }
-            drop(db_guard);
 
             let embeddings = get_embeddings(&client, &cfg, &chunks, &doc_id).await?;
-            let mut db_guard = db.lock().await;
-            db_guard.insert_chunks(&collection, &doc_id, chunks.clone(), embeddings.clone())?;
-            drop(db_guard);
+            {
+                let mut db_guard = db.lock().await;
+                db_guard.insert_chunks(&collection, &doc_id, &chunks, &embeddings)?;
+            }
 
             let action = if force { "re-indexed" } else { "indexed" };
             Ok((
-                std::path::Path::new(&fp)
-                    .file_name()
-                    .unwrap_or_default()
-                    .to_string_lossy()
-                    .to_string(),
+                display_name,
                 chunks.len(),
                 format!("{} segment {}", chunks.len(), action),
             ))
@@ -230,7 +197,7 @@ pub async fn ingest_directory(
                 result_lines.push(format!("  {} {}: {}", prefix, filename, msg));
             }
             Ok(Err(e)) => {
-                result_lines.push(format!("  ✗ {}: {}", "file", e));
+                result_lines.push(format!("  ✗ file: {}", e));
             }
             Err(e) => {
                 result_lines.push(format!("  ✗ task panic: {}", e));

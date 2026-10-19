@@ -10,22 +10,16 @@ use crate::config::Config;
 use crate::db::Db;
 use crate::embedder::get_embeddings;
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Args)]
 pub struct AddDocumentsArgs {
+    #[arg(short, long)]
     pub collection: String,
+    #[arg(short, long)]
     pub ids: Vec<String>,
+    #[arg(short, long)]
     pub documents: Vec<String>,
+    #[arg(short, long)]
     #[serde(default)]
-    pub force: bool,
-}
-
-#[derive(Args)]
-pub struct AddDocumentsCliArgs {
-    #[arg(short, long)]
-    pub collection: String,
-    #[arg(short, long)]
-    pub input: String, // path to JSON file containing {ids: [...], documents: [...]}
-    #[arg(short, long)]
     pub force: bool,
 }
 
@@ -39,27 +33,27 @@ pub async fn add_documents(
         return Err(anyhow::anyhow!("Number of IDs and documents do not match."));
     }
 
-    let db_guard = db.lock().await;
-    db_guard.insert_collection(&args.collection)?;
-    drop(db_guard);
+    {
+        let db_guard = db.lock().await;
+        db_guard.insert_collection(&args.collection)?;
+    }
 
-    // Prepare data for each document: (doc_id, chunks, embeddings)
-    // We'll skip documents that already exist and force=false.
-    let mut to_insert = Vec::new();
-    let mut skipped = Vec::new();
+    // One query for every id — instead of a lock+query per document.
+    let existing = {
+        let db_guard = db.lock().await;
+        db_guard.existing_doc_ids(&args.collection, &args.ids)?
+    };
+
+    let mut to_insert: Vec<(String, Vec<String>)> = Vec::new();
+    let mut skipped: Vec<String> = Vec::new();
     let t0 = Instant::now();
 
     for (i, (doc_id, doc_text)) in args.ids.iter().zip(args.documents.iter()).enumerate() {
         debug!("Document {}/{}: '{}'", i + 1, args.ids.len(), doc_id);
-        let db_guard = db.lock().await;
-        let exists = db_guard.doc_exists(&args.collection, doc_id)?;
-        drop(db_guard);
-
-        if exists && !args.force {
+        if existing.contains(doc_id) && !args.force {
             skipped.push(doc_id.clone());
             continue;
         }
-
         let chunks = chunk_text_exact(
             doc_text,
             cfg.chunk_size,
@@ -83,10 +77,9 @@ pub async fn add_documents(
         return Ok(msg);
     }
 
-    // Fetch embeddings for all chunks (grouped by document)
-    // We'll collect all chunk texts with their doc index
-    let mut all_chunks = Vec::new();
-    let mut doc_indices = Vec::new(); // parallel to all_chunks, stores which doc it belongs to
+    // Flatten chunks for embedding; remember which doc each came from.
+    let mut all_chunks: Vec<String> = Vec::new();
+    let mut doc_indices: Vec<usize> = Vec::new();
     for (doc_idx, (_doc_id, chunks)) in to_insert.iter().enumerate() {
         for chunk in chunks {
             all_chunks.push(chunk.clone());
@@ -95,28 +88,26 @@ pub async fn add_documents(
     }
 
     let embeddings = get_embeddings(client, cfg, &all_chunks, "batch").await?;
-    // Group embeddings back by document
-    let mut doc_embeddings: Vec<Vec<Vec<f32>>> = Vec::new();
-    for _ in 0..to_insert.len() {
-        doc_embeddings.push(Vec::new());
-    }
+
+    // Regroup embeddings back per document.
+    let mut doc_embeddings: Vec<Vec<Vec<f32>>> = vec![Vec::new(); to_insert.len()];
     for (emb, doc_idx) in embeddings.into_iter().zip(doc_indices) {
         doc_embeddings[doc_idx].push(emb);
     }
 
-    // Prepare final data: (doc_id, chunks, embeddings)
-    let mut insert_data = Vec::new();
-    for ((doc_id, chunks), emb_list) in to_insert.into_iter().zip(doc_embeddings) {
-        insert_data.push((doc_id, chunks, emb_list));
+    let insert_data: Vec<(String, Vec<String>, Vec<Vec<f32>>)> = to_insert
+        .into_iter()
+        .zip(doc_embeddings)
+        .map(|((doc_id, chunks), embs)| (doc_id, chunks, embs))
+        .collect();
+
+    {
+        let mut db_guard = db.lock().await;
+        db_guard.replace_chunks_batch(&args.collection, &insert_data)?;
     }
 
-    // Perform batch insert in a single transaction
-    let mut db_guard = db.lock().await;
-    db_guard.replace_chunks_batch(&args.collection, &insert_data)?;
-    drop(db_guard);
-
     let elapsed = t0.elapsed();
-    let total_chunks: usize = insert_data.iter().map(|(_, chunks, _)| chunks.len()).sum();
+    let total_chunks: usize = insert_data.iter().map(|(_, c, _)| c.len()).sum();
 
     let mut msg = format!(
         "✓ Indexed {} chunks in '{}' in {}.",

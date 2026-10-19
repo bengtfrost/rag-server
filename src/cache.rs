@@ -1,6 +1,7 @@
 use dashmap::DashMap;
 use once_cell::sync::Lazy;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
 const MAX_CACHE_SIZE: usize = 1000;
@@ -9,18 +10,21 @@ const DEFAULT_TTL_SECS: u64 = 300;
 pub struct QueryCache {
     inner: DashMap<String, CachedEntry>,
     ttl: Duration,
+    start: Instant,
 }
 
 struct CachedEntry {
     results: Arc<Vec<String>>,
     created_at: Instant,
+    last_accessed_ms: AtomicU64,
 }
 
 impl CachedEntry {
-    fn new(results: Vec<String>) -> Self {
+    fn new(results: Vec<String>, now_ms: u64) -> Self {
         Self {
             results: Arc::new(results),
             created_at: Instant::now(),
+            last_accessed_ms: AtomicU64::new(now_ms),
         }
     }
 
@@ -35,44 +39,44 @@ impl QueryCache {
         Self {
             inner: DashMap::with_capacity(MAX_CACHE_SIZE),
             ttl: Duration::from_secs(ttl_secs),
+            start: Instant::now(),
         }
     }
 
     #[inline]
     pub fn get(&self, key: &str) -> Option<Arc<Vec<String>>> {
-        if let Some(entry) = self.inner.get(key) {
-            if !entry.value().is_expired(self.ttl) {
-                return Some(entry.value().results.clone());
-            }
+        let entry = self.inner.get(key)?;
+        if entry.is_expired(self.ttl) {
             drop(entry);
             self.inner.remove(key);
+            return None;
         }
-        None
+        let now_ms = self.start.elapsed().as_millis() as u64;
+        entry.last_accessed_ms.store(now_ms, Ordering::Relaxed);
+        Some(entry.results.clone())
     }
 
     pub fn insert(&self, key: String, results: Vec<String>) {
         if self.inner.len() >= MAX_CACHE_SIZE {
             self.evict_lru();
         }
-        let entry = CachedEntry::new(results);
-        self.inner.insert(key, entry);
+        let now_ms = self.start.elapsed().as_millis() as u64;
+        self.inner.insert(key, CachedEntry::new(results, now_ms));
     }
 
     fn evict_lru(&self) {
         let mut oldest_key: Option<String> = None;
-        let mut oldest_time = Instant::now();
+        let mut oldest_access = u64::MAX;
 
         for entry in self.inner.iter() {
-            let entry_ref = entry.value();
-            let time = entry_ref.created_at;
-
-            if entry_ref.is_expired(self.ttl) {
+            // Prefer evicting an already-expired entry.
+            if entry.is_expired(self.ttl) {
                 oldest_key = Some(entry.key().clone());
                 break;
             }
-
-            if time < oldest_time {
-                oldest_time = time;
+            let access = entry.last_accessed_ms.load(Ordering::Relaxed);
+            if access < oldest_access {
+                oldest_access = access;
                 oldest_key = Some(entry.key().clone());
             }
         }
@@ -86,10 +90,6 @@ impl QueryCache {
     pub fn clear(&self) {
         self.inner.clear();
     }
-
-    // Remove or comment out unused methods
-    // pub fn len(&self) -> usize { self.inner.len() }
-    // pub fn is_empty(&self) -> bool { self.inner.is_empty() }
 }
 
 pub static QUERY_CACHE: Lazy<QueryCache> = Lazy::new(|| {

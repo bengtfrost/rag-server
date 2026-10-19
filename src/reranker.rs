@@ -1,7 +1,7 @@
+use crate::config::Config;
 use reqwest::Client;
 use serde_json::json;
 use tracing::debug;
-use crate::config::Config;
 
 pub async fn rerank(
     client: &Client,
@@ -15,18 +15,21 @@ pub async fn rerank(
         return Ok(Vec::new());
     }
 
-    // Adaptive reranking: skip if few candidates
     let min_candidates = cfg.rerank_min_candidates.unwrap_or(3);
     if documents.len() <= min_candidates {
         debug!("Skipping reranking: only {} candidates", documents.len());
         return Ok(documents
             .iter()
             .enumerate()
+            .take(top_n)
             .map(|(i, _)| (i, 1.0))
             .collect());
     }
 
-    debug!("Reranking {} candidates via Agentgateway...", documents.len());
+    debug!(
+        "Reranking {} candidates via Agentgateway...",
+        documents.len()
+    );
 
     let payload = json!({
         "model": cfg.rerank_model,

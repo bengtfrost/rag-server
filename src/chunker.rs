@@ -48,82 +48,68 @@ impl BgeChunker {
 
     pub fn chunk_text(&self, text: &str, max_tokens: usize, overlap_tokens: usize) -> Vec<String> {
         let sentences = self.split_sentences(text);
-
-        if sentences.len() > 500 {
-            return self.chunk_text_parallel(&sentences, max_tokens, overlap_tokens);
+        if sentences.is_empty() {
+            return Vec::new();
         }
 
-        self.chunk_text_sequential(&sentences, max_tokens, overlap_tokens)
+        // Tokenization dominates cost; parallelize it for large inputs while keeping
+        // chunking itself sequential so overlap across chunk boundaries stays correct.
+        let token_counts: Vec<usize> = if sentences.len() > 500 {
+            sentences.par_iter().map(|s| self.count_tokens(s)).collect()
+        } else {
+            sentences.iter().map(|s| self.count_tokens(s)).collect()
+        };
+
+        self.chunk_text_with_counts(&sentences, &token_counts, max_tokens, overlap_tokens)
     }
 
-    fn chunk_text_sequential(
+    fn chunk_text_with_counts(
         &self,
         sentences: &[String],
+        token_counts: &[usize],
         max_tokens: usize,
         overlap_tokens: usize,
     ) -> Vec<String> {
+        debug_assert_eq!(sentences.len(), token_counts.len());
+
         let mut chunks = Vec::new();
-        let mut current_chunk: Vec<String> = Vec::new();
-        let mut current_tokens = 0;
+        let mut current: Vec<(String, usize)> = Vec::new();
+        let mut current_tokens = 0usize;
 
-        for sent in sentences {
-            let tokens = self.count_tokens(sent);
-            if current_tokens + tokens > max_tokens && !current_chunk.is_empty() {
-                chunks.push(current_chunk.join(" "));
+        for (sent, &tokens) in sentences.iter().zip(token_counts.iter()) {
+            if current_tokens + tokens > max_tokens && !current.is_empty() {
+                chunks.push(join_sentences(&current));
 
-                let mut overlap_vec = Vec::new();
-                let mut overlap_count = 0;
-                for s in current_chunk.iter().rev() {
-                    let sn = self.count_tokens(s);
+                let mut overlap: Vec<(String, usize)> = Vec::new();
+                let mut overlap_count = 0usize;
+                for (s, sn) in current.iter().rev() {
                     if overlap_count + sn <= overlap_tokens {
-                        overlap_vec.insert(0, s.clone());
+                        overlap.insert(0, (s.clone(), *sn));
                         overlap_count += sn;
                     } else {
                         break;
                     }
                 }
-                current_chunk = overlap_vec;
+                current = overlap;
                 current_tokens = overlap_count;
             }
-            current_chunk.push(sent.clone());
+            current.push((sent.clone(), tokens));
             current_tokens += tokens;
         }
-        if !current_chunk.is_empty() {
-            chunks.push(current_chunk.join(" "));
+
+        if !current.is_empty() {
+            chunks.push(join_sentences(&current));
         }
         chunks
     }
+}
 
-    fn chunk_text_parallel(
-        &self,
-        sentences: &[String],
-        max_tokens: usize,
-        overlap_tokens: usize,
-    ) -> Vec<String> {
-        let chunk_size = 100;
-        let groups: Vec<Vec<String>> = sentences
-            .par_chunks(chunk_size)
-            .map(|group| group.to_vec())
-            .collect();
-
-        let all_chunks: Vec<String> = groups
-            .par_iter()
-            .flat_map(|group| self.chunk_text_sequential(group, max_tokens, overlap_tokens))
-            .collect();
-
-        let mut merged: Vec<String> = Vec::new();
-        for chunk in all_chunks {
-            if let Some(last) = merged.last_mut() {
-                if last.len() + chunk.len() < max_tokens * 2 {
-                    *last = format!("{} {}", last, chunk);
-                    continue;
-                }
-            }
-            merged.push(chunk);
-        }
-
-        merged
-    }
+fn join_sentences(items: &[(String, usize)]) -> String {
+    items
+        .iter()
+        .map(|(s, _)| s.as_str())
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
 pub fn chunk_text_exact(
@@ -135,4 +121,3 @@ pub fn chunk_text_exact(
     let chunker = BgeChunker::new(tokenizer_path)?;
     Ok(chunker.chunk_text(text, max_tokens, overlap_tokens))
 }
-
