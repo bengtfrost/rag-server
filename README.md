@@ -1,4 +1,4 @@
-🚀 Sovereign RAG MCP Server (Rust) — v2.3.7
+🚀 Sovereign RAG MCP Server (Rust) — v2.4.0
 
 > **High-Performance Legal & Code Intelligence for the Terminal.**
 
@@ -52,7 +52,7 @@ graph TD
 - **BGE-M3 (port 11435):** Generates high-quality multilingual embeddings for semantic search.
 - **Reranker (port 11436/11437):** Cross-encoder models for precision reranking (BGE for Swedish, Mxbai for English).
 - **SQLite-Vec + FTS5:** Vector search + BM25 keyword search in the same database.
-- **Query Cache:** In‑memory cache with 5‑minute TTL for repeated queries.
+- **Query Cache:** In‑memory LRU cache with 5‑minute TTL for repeated queries.
 - **Agentgateway (port 4000):** Optional HTTP proxy that can route to local or cloud models; **not required** for the RAG server to function.
 
 > **Note:** The RAG server makes outgoing HTTP calls to the LLM, embedding, and reranker services. It does **not** accept incoming HTTP requests. All MCP communication with Goose is via STDIO.
@@ -106,6 +106,13 @@ If you have an existing database, add FTS5 support for BM25 keyword search:
 sqlite3 ~/.config/rag-server/vectors.db "INSERT OR IGNORE INTO docs_fts(rowid, id, collection, text) SELECT rowid, id, collection, text FROM docs;"
 ```
 
+### 5. Upgrade from v2.3.x
+
+**v2.4.0 contains DB-affecting fixes** — see the [Change Log](#-change-log). Two upgrade notes:
+
+- **`ingest_directory` now uses absolute paths as `doc_id`s.** Files previously indexed with the bare filename will re-appear under a new id on the next directory ingest. If you don't want duplicates, clear (or re-ingest) the affected collection.
+- **Chunk cleanup was previously unsafe on re-index.** Old builds could leave orphan chunks after re-indexing a file with fewer chunks, and the `LIKE 'doc_id%'` deletion could accidentally touch sibling docs named `doc_id_*`. The new code deletes by exact `parent_id`. Existing DBs are usable as-is, but a fresh `rm ~/.config/rag-server/vectors.db` followed by re-ingestion is the cleanest path.
+
 ---
 
 ## ⚙️ Configuration
@@ -125,6 +132,10 @@ export RAG_RERANK_K=10
 export RAG_RERANK_MIN_CANDIDATES=3
 export RAG_MAX_CONCURRENT_FILES=4
 export RAG_MAX_CONCURRENT_REQUESTS=4
+
+# Optional: override default paths
+# export RAG_DB_PATH="$HOME/.config/rag-server/vectors.db"
+# export RAG_TOKENIZER_PATH="$HOME/.config/rag-server/tokenizer.json"
 ```
 
 Source it in your shell profile or in the Goose launch wrapper (`_goose_session`). See the full example in the **Goose** section below.
@@ -133,27 +144,29 @@ Source it in your shell profile or in the Goose launch wrapper (`_goose_session`
 
 These are the **compiled-in defaults** from `src/config.rs`. Override them via environment variables (e.g., in `~/.config/rag-server/env`).
 
-| Variable                         | Default Value                                | Description                                          |
-| -------------------------------- | -------------------------------------------- | ---------------------------------------------------- |
-| `SQLITE_VEC_PATH`                | `sqlite-vec`                                 | Path to the `sqlite-vec` extension (`.so` / `.dylib`). |
-| `RAG_EMBED_URL`                  | `http://localhost:11435/v1/embeddings`       | HTTP endpoint for embedding server.                  |
-| `RAG_EMBED_MODEL`                | `bge-m3`                                     | Model name sent to the embedder.                     |
-| `RAG_RERANK_URL`                 | `http://localhost:11436/rerank`              | HTTP endpoint for reranker server.                   |
-| `RAG_RERANK_MODEL`               | `bge-reranker-v2-m3`                         | Model name sent to the reranker.                     |
-| `RAG_CHUNK_SIZE`                 | `1024`                                       | Max tokens per segment.                              |
-| `RAG_CHUNK_OVERLAP`              | `150`                                        | Token overlap for context.                           |
-| `RAG_BATCH_SIZE`                 | `8`                                          | Embedding batch size for API requests.               |
-| `RAG_RERANK_K`                   | `15`                                         | Number of ANN candidates retrieved before reranking. |
-| `RAG_RERANK_MIN_SCORE`           | `0.3`                                        | Minimum relevance score to keep.                     |
-| `RAG_MAX_CONCURRENT_FILES`       | `4`                                          | Parallelism when ingesting directories.              |
-| `RAG_MAX_CONCURRENT_REQUESTS`    | *(unset → sequential)*                       | Max parallel HTTP requests for embeddings.           |
-| `RAG_RERANK_MIN_CANDIDATES`      | *(unset → always rerank)*                    | Skip reranking if fewer candidates (adaptive).       |
+| Variable                      | Default Value                                | Description                                                                                       |
+| ----------------------------- | -------------------------------------------- | ------------------------------------------------------------------------------------------------- |
+| `SQLITE_VEC_PATH`             | `sqlite-vec`                                 | Path to the `sqlite-vec` extension (`.so` / `.dylib`).                                            |
+| `RAG_DB_PATH`                 | `$XDG_CONFIG_HOME/rag-server/vectors.db`     | Path to the SQLite database (overridable since v2.4.0).                                           |
+| `RAG_TOKENIZER_PATH`          | `$XDG_CONFIG_HOME/rag-server/tokenizer.json` | Path to the BGE-M3 `tokenizer.json` (overridable since v2.4.0).                                   |
+| `RAG_EMBED_URL`               | `http://localhost:11435/v1/embeddings`       | HTTP endpoint for embedding server.                                                               |
+| `RAG_EMBED_MODEL`             | `bge-m3`                                     | Model name sent to the embedder.                                                                  |
+| `RAG_RERANK_URL`              | `http://localhost:11436/rerank`              | HTTP endpoint for reranker server.                                                                |
+| `RAG_RERANK_MODEL`            | `bge-reranker-v2-m3`                         | Model name sent to the reranker.                                                                  |
+| `RAG_CHUNK_SIZE`              | `1024`                                       | Max tokens per segment.                                                                           |
+| `RAG_CHUNK_OVERLAP`           | `150`                                        | Token overlap for context.                                                                        |
+| `RAG_BATCH_SIZE`              | `8`                                          | Embedding batch size for API requests.                                                            |
+| `RAG_RERANK_K`                | `15`                                         | Number of ANN candidates retrieved before reranking.                                              |
+| `RAG_RERANK_MIN_SCORE`        | `0.3`                                        | Minimum relevance score to keep.                                                                  |
+| `RAG_MAX_CONCURRENT_FILES`    | `4`                                          | Parallelism when ingesting directories.                                                           |
+| `RAG_MAX_CONCURRENT_REQUESTS` | _(unset → sequential)_                       | Max parallel HTTP requests for embeddings. Order is now preserved under concurrency since v2.4.0. |
+| `RAG_RERANK_MIN_CANDIDATES`   | _(unset → always rerank)_                    | Skip reranking if fewer candidates (adaptive).                                                    |
 
-**Compiled-in paths and settings (not overridable via env in the current version):**
+**Compiled-in settings (not overridable via env):**
 
-- **Database:** `~/.config/rag-server/vectors.db`
-- **Tokenizer:** `~/.config/rag-server/tokenizer.json`
 - **HTTP timeout:** `14400` seconds (hard-coded)
+
+> **Note:** `RAG_MAX_CONCURRENT_REQUESTS` was previously unsafe with values `> 1` — the batch combiner used `buffer_unordered`, so embeddings could be attached to the wrong chunks. Fixed in v2.4.0 with `buffered`. It is now safe to set this to `4` (or higher) for faster ingestion.
 
 ---
 
@@ -285,7 +298,7 @@ alias goose-gemini-en='_goose_session gemini-3.5-flash "" local-llama-server-rer
 
 ---
 
-## 🖥 CLI Usage (v2.3)
+## 🖥 CLI Usage (v2.4)
 
 The same binary acts as a full‑featured command‑line tool. Run it without arguments to start the MCP server (stdin/stdout). Run it with a subcommand to perform operations directly.
 
@@ -319,11 +332,8 @@ The same binary acts as a full‑featured command‑line tool. Run it without ar
 #### Document Ingestion
 
 ```bash
-# Ingest a single file (standard)
+# Ingest a single file
 ./target/release/rag-server ingest-file --collection juridik --file-path ~/dokument/lag.pdf
-
-# Ingest with pipeline optimization (faster for large documents)
-./target/release/rag-server ingest-file --collection juridik --file-path ~/dokument/lag.pdf --pipeline
 
 # Ingest all .txt and .pdf files in a directory
 ./target/release/rag-server ingest-directory --collection juridik --directory-path ~/dokument/ --extensions txt,pdf
@@ -408,9 +418,7 @@ By utilizing **Quantization-Aware Training (QAT-UD)** and **N-Gram software spec
 
 - **800% Speedup:** Indexing 700 project chunks reduced from **45+ mins (CPU)** to **~5 mins (iGPU)**.
 
-- **20–30% Faster Ingestion:** The new pipeline (`--pipeline`) overlaps chunk generation and embedding, reducing total time.
-
-- **100% Speedup on Repeated Queries:** Query cache serves identical queries instantly.
+- **100% Speedup on Repeated Queries:** LRU query cache serves identical queries instantly.
 
 - **Linguistic Precision:** Handles Swedish legal nuances and complex Rust traits without semantic drift.
 
@@ -420,7 +428,7 @@ By utilizing **Quantization-Aware Training (QAT-UD)** and **N-Gram software spec
 
 ---
 
-## 📊 Test Results (v2.3 Validation)
+## 📊 Test Results (v2.4 Validation)
 
 Comprehensive testing with real legal documents validated all core features:
 
@@ -428,7 +436,6 @@ Comprehensive testing with real legal documents validated all core features:
 | -------------------------------- | ------------------------------------------ |
 | ✅ Collection Management         | Create, list, delete                       |
 | ✅ Single File Ingestion         | 7,686-line file → 96 segments in 13 min    |
-| ✅ Pipeline Ingestion            | Faster, reliable with large documents      |
 | ✅ Directory Bulk Ingestion      | 3 files → 15 segments                      |
 | ✅ Mixed Content (TXT + PDF)     | 33+ segments                               |
 | ✅ Semantic Search               | Exact citation retrieval with 97% accuracy |
@@ -437,14 +444,31 @@ Comprehensive testing with real legal documents validated all core features:
 | ✅ Query Expansion               | LLM-based synonym generation               |
 | ✅ Query Cache                   | Instant response on repeated queries       |
 | ✅ Document/Collection Deletion  | Clean removal                              |
+| ✅ Re-index Correctness          | No orphan chunks after shrinking a file    |
 
 **All critical tests passed.** The server is production-ready for legal, codebase, and technical QA deployments.
-
-> Tested against the v2.3 line. The v2.3.7 release only changes dependencies and translations; search and ingestion behaviour is unchanged.
 
 ---
 
 ## 📝 Change Log
+
+### v2.4.0 (2026-10-19)
+
+**Correctness, concurrency and cleanup release.**
+
+- **Path expansion fix:** `~` in the config-dir path is now expanded via `dirs::config_dir()` instead of producing a literal `./~` directory. `RAG_DB_PATH` and `RAG_TOKENIZER_PATH` env vars are now honoured.
+- **Embedding alignment fix:** `embedder.rs` uses `buffered()` instead of `buffer_unordered()`. With `RAG_MAX_CONCURRENT_REQUESTS > 1`, previous builds could attach embeddings to the wrong chunks when batches completed out of order.
+- **Safe chunk deletion:** replaced `LIKE 'doc_id%'` with exact `parent_id`-derived id deletion. A doc named `test` can no longer wipe chunks of a doc named `testing`. Added index `idx_docs_parent` on `docs(collection, parent_id)`.
+- **Stale-chunk fix:** `insert_chunks` clears all existing chunks for a `parent_id` before inserting, so re-indexing a file with a smaller chunk count leaves no orphans behind.
+- **Chunker:** removed the broken byte-length merge heuristic in the parallel path. Parallelism now covers token counting only, keeping chunk and overlap logic identical to the sequential path.
+- **Reranker:** `top_n` is honoured on the small-candidate skip path (previously returned every candidate).
+- **Query cache:** true LRU via atomic last-accessed timestamp (was FIFO by creation time). Cache key now includes the embedding model so model swaps invalidate cleanly.
+- **`ingest_directory`:** uses absolute paths as `doc_id`s, avoiding filename collisions (`README.md` vs `readme.md`) and multi-directory clashes.
+- **`add_documents`:** batch existence check via a single query instead of one lock+query per document.
+- **`expander`:** `Lazy<Regex>` instead of recompiling per call.
+- **MCP server:** tool calls are now spawned so a panic surfaces as a JSON-RPC error instead of killing the process.
+- **Removed `--pipeline`:** the producer/consumer pipeline was correct only by accident (it defeated its own concurrency, embedding one batch at a time). After the `buffered()` fix, the straight-line chunk→embed path is faster and simpler. `pipeline.rs` is deleted; the `--pipeline` flag is removed from `ingest_file` and from the MCP tool schema.
+- **Version bump:** `Cargo.toml` and `src/main.rs` `serverInfo.version` → `2.4.0`.
 
 ### v2.3.7 (2026-10-17)
 
@@ -461,8 +485,6 @@ Comprehensive testing with real legal documents validated all core features:
 - **Multi-Architecture Support:** Verified support and container image builds for `linux/amd64` and `linux/arm64`.
 
 ### v2.3 (2026-07-04)
-
-- **Pipeline Ingestion:** New `--pipeline` flag for overlapping chunking and embedding.
 
 - **Query Cache:** In‑memory cache (5 min TTL) for repeated query results; added `--no-cache` and `clear-cache` command.
 
@@ -513,7 +535,7 @@ Docker automatically selects the correct architecture when you pull the image.
 | -------------- | -------------------------------------------------------------- |
 | `latest`       | Most recent build from the `main` branch.                      |
 | `<commit-sha>` | Exact commit hash for pinpoint rollbacks.                      |
-| `vX.Y.Z`       | Semantic version extracted from `Cargo.toml` (e.g., `v2.3.7`). |
+| `vX.Y.Z`       | Semantic version extracted from `Cargo.toml` (e.g., `v2.4.0`). |
 
 ### Container Registry
 
@@ -530,7 +552,7 @@ Docker automatically selects the correct architecture when you pull the image.
 docker pull ghcr.io/bengtfrost/rag-server:latest
 
 # Pull a specific version
-docker pull ghcr.io/bengtfrost/rag-server:v2.3.7
+docker pull ghcr.io/bengtfrost/rag-server:v2.4.0
 
 # Run the binary
 docker run --rm ghcr.io/bengtfrost/rag-server:latest --help
