@@ -1,5 +1,10 @@
 🚀 Sovereign RAG MCP Server (Rust) — v2.4.0
 
+[![CI/CD Pipeline](https://github.com/bengtfrost/rag-server/actions/workflows/ci-cd.yml/badge.svg)](https://github.com/bengtfrost/rag-server/actions/workflows/ci-cd.yml)
+[![Container](https://img.shields.io/badge/ghcr.io-rag--server-blue?logo=docker)](https://github.com/bengtfrost/rag-server/pkgs/container/rag-server)
+[![Multi-arch](https://img.shields.io/badge/platform-linux%2Famd64%20%7C%20linux%2Farm64-blueviolet)](https://github.com/bengtfrost/rag-server/pkgs/container/rag-server)
+[![Version](https://img.shields.io/github/v/tag/bengtfrost/rag-server?label=version&color=brightgreen)](https://github.com/bengtfrost/rag-server/tags)
+
 > **High-Performance Legal & Code Intelligence for the Terminal.**
 
 A "Native & Lean" implementation of a Retrieval-Augmented Generation (RAG) server written in **Rust**. This server exposes high-precision search logic via the **Model Context Protocol (MCP)**, specifically optimized for **Void GNU/Linux** and **Intel iGPU (Vulkan)** hardware.
