@@ -121,7 +121,7 @@ cargo build --release
 RUSTFLAGS="-C target-cpu=native" cargo build --release
 ```
 
-> **Since v2.4.1** the release profile uses `lto = "thin"`, `codegen-units = 1`, `strip = "symbols"` and `panic = "abort"`. First builds take noticeably longer (~5–10 min on a typical U-series laptop) but the binary is smaller and faster at runtime. Debug builds and incremental builds are unaffected.
+> **Since v2.4.1 the release profile uses lto = "thin", codegen-units = 1, and strip = "symbols". First builds take noticeably longer (~5–10 min on a typical U-series laptop) but the binary is smaller and faster at runtime. Debug builds and incremental builds are unaffected.
 
 The resulting binary is `./target/release/rag-server-mcp`.
 
@@ -527,7 +527,10 @@ Hard fail by design — a 0 chunk size panics the chunker. Same for `RAG_BATCH_S
 - **`expander.rs`** now reads its endpoint and bearer token from `Config`. Backends that don't need auth are no longer sent a bogus `Authorization: Bearer sk-unused` header.
 - **Path resolution.** `./tokenizer.json` and `./extensions/vec0.{so,dylib,dll}` are probed in the CWD before falling back to `~/.config/rag-server/…` and bare `"vec0"`. A fresh clone boots with zero environment variables.
 - **Dependency cleanup.** Removed `lazy_static` and `once_cell`. All usages migrated to `std::sync::{LazyLock, OnceLock}` (stable since Rust 1.80). Three fewer crates in the graph; no behaviour change.
-- **`[profile.release]`** added: `lto = "thin"`, `codegen-units = 1`, `strip = "symbols"`, `panic = "abort"`. Longer first builds; smaller and faster binary.
+- **`[profile.release]`** added: lto = "thin", codegen-units = 1, strip = "symbols". Longer first builds; smaller and faster binary. (panic = "abort" was tried and rejected — see below.) Tool-call panics are isolated to the failing request; the server keeps serving.
+
+Panic strategy: panic is unwind in release builds so a tool that panics returns -32603 over JSON-RPC instead of killing the process. A std::panic::set_hook in main.rs logs the panic's file:line:col and payload to stderr before the task unwind is caught — JoinError's default Display shows the payload but not the source location.
+
 - **`Cargo.toml`** `rust-version` → `1.100`. `src/main.rs` `serverInfo.version` → `2.4.1`.
 
 ### v2.4.0 (2026-10-19)

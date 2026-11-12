@@ -50,20 +50,11 @@ enum Commands {
     ClearCache,
 }
 
-/// `cfg!(panic = "unwind")` is not a thing, so record the fact once at
-/// compile time. Kept honest by the `[profile.release] panic = "…"` line in
-/// Cargo.toml — see the spawn comment below.
-const PANIC_MODE: &str = if cfg!(debug_assertions) {
-    "unwind (debug)"
-} else {
-    "see Cargo.toml"
-};
-
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     // Logs MUST go to stderr — stdout is the JSON-RPC transport.
-    // `println!` on stdout is line-buffered, so every JSON-RPC response
-    // is flushed automatically; any stray log line on stdout would corrupt
+    // `println!` on stdout is line-buffered, so every JSON-RPC response is
+    // flushed automatically; any stray log line on stdout would corrupt
     // the protocol.
     fmt()
         .with_env_filter(
@@ -74,9 +65,9 @@ async fn main() -> anyhow::Result<()> {
         .with_target(false)
         .init();
 
-    // Log every panic — including the ones that will abort the process if
-    // `panic = "abort"` is set for this profile. Without this hook, an
-    // aborting panic produces a bare SIGABRT and no diagnostic trail.
+    // `JoinError`'s Display impl shows the panic payload but not the
+    // source location — record it here so a panic in a tool has an
+    // actionable file:line:col in stderr.
     std::panic::set_hook(Box::new(|info| {
         let location = info
             .location()
@@ -119,7 +110,6 @@ async fn run_server() -> anyhow::Result<()> {
         rerank_url = %cfg.rerank_url,
         expand_url = %cfg.expand_url,
         timeout_secs = cfg.timeout_secs,
-        panic_mode = PANIC_MODE,
         "Sovereign Rust RAG Server listening on stdio"
     );
 
@@ -175,18 +165,11 @@ async fn run_server() -> anyhow::Result<()> {
 
                 info!(tool = %tool_name, "Executing tool call");
 
-                // Panic isolation here depends on `panic = "unwind"` in the
-                // active Cargo profile:
-                //   - unwind (default for dev/test): a panic in the spawned
-                //     task is caught by tokio and surfaces as Err(JoinError)
-                //     in the match below. The server keeps serving.
-                //   - abort (currently set for release in Cargo.toml): a
-                //     panic aborts the process before JoinError can be
-                //     produced. The Err arm below then only fires for task
-                //     cancellation.
-                // If release isolation is required, drop `panic = "abort"`
-                // from [profile.release] — the ~3-5% size win is not worth
-                // losing the guarantee this spawn exists for.
+                // Isolate tool execution in a spawned task so a panic
+                // becomes a JSON-RPC error for this one request instead of
+                // terminating the server. Requires `panic = "unwind"` in
+                // the active profile (the default), which [profile.release]
+                // in Cargo.toml leaves untouched.
                 let handle =
                     tokio::spawn(
                         async move { call_tool(&tool_name, args, &cfg, &db, &client).await },

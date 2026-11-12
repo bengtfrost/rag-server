@@ -155,3 +155,4 @@ tokenizer.json
 *.gguf
 *.bin
 *.onnx
+.release-notes/
