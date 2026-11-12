@@ -43,7 +43,7 @@ pub async fn query(
     client: &reqwest::Client,
     args: QueryArgs,
 ) -> anyhow::Result<String> {
-    let optimized_query = expand_query(client, &args.query).await;
+    let optimized_query = expand_query(client, cfg, &args.query).await;
     let query_preview = if optimized_query.len() > 80 {
         format!("{}...", &optimized_query[..80])
     } else {

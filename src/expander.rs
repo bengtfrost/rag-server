@@ -1,15 +1,15 @@
-use once_cell::sync::Lazy;
 use regex::Regex;
 use reqwest::Client;
 use serde_json::json;
+use std::sync::LazyLock;
 use std::time::Duration;
 use tracing::{debug, warn};
 
-const EXPAND_URL: &str = "http://localhost:4000/v1/chat/completions";
+use crate::config::Config;
 
-static QUOTE_RE: Lazy<Regex> = Lazy::new(|| Regex::new(r#"["']"#).unwrap());
+static QUOTE_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r#"["']"#).unwrap());
 
-pub async fn expand_query(client: &Client, query: &str) -> String {
+pub async fn expand_query(client: &Client, cfg: &Config, query: &str) -> String {
     let broad_keywords = vec![
         "berätta om",
         "vad är",
@@ -42,14 +42,18 @@ pub async fn expand_query(client: &Client, query: &str) -> String {
         "max_tokens": 50,
     });
 
-    match client
-        .post(EXPAND_URL)
+    let mut req = client
+        .post(&cfg.expand_url)
         .json(&payload)
-        .header("Authorization", "Bearer sk-unused")
-        .timeout(Duration::from_secs(3))
-        .send()
-        .await
-    {
+        .timeout(Duration::from_secs(3));
+
+    // Only send an Authorization header when a token is configured. The old
+    // hardcoded "Bearer sk-unused" forced every backend to see a bogus token.
+    if let Some(token) = &cfg.expand_auth_token {
+        req = req.header("Authorization", format!("Bearer {}", token));
+    }
+
+    match req.send().await {
         Ok(resp) => {
             if let Ok(data) = resp.json::<serde_json::Value>().await {
                 if let Some(content) = data["choices"][0]["message"]["content"].as_str() {

@@ -1,6 +1,6 @@
 use dashmap::DashMap;
-use once_cell::sync::Lazy;
 use std::sync::Arc;
+use std::sync::LazyLock;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
@@ -57,7 +57,7 @@ impl QueryCache {
     }
 
     pub fn insert(&self, key: String, results: Vec<String>) {
-        if self.inner.len() >= MAX_CACHE_SIZE {
+        if self.inner.len() >= MAX_CACHE_SIZE && !self.inner.contains_key(&key) {
             self.evict_lru();
         }
         let now_ms = self.start.elapsed().as_millis() as u64;
@@ -92,7 +92,7 @@ impl QueryCache {
     }
 }
 
-pub static QUERY_CACHE: Lazy<QueryCache> = Lazy::new(|| {
+pub static QUERY_CACHE: LazyLock<QueryCache> = LazyLock::new(|| {
     let ttl = std::env::var("RAG_CACHE_TTL")
         .ok()
         .and_then(|s| s.parse().ok())

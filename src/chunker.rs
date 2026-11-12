@@ -1,26 +1,38 @@
 use rayon::prelude::*;
 use regex::Regex;
+use std::sync::{LazyLock, OnceLock};
 use tokenizers::Tokenizer;
 
-#[derive(Clone)]
+static SENTENCE_RE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"([.!?])\s+([A-ZÅÄÖ])").unwrap());
+
+static TOKENIZER: OnceLock<Result<Tokenizer, String>> = OnceLock::new();
+
+fn load_tokenizer(path: &str) -> anyhow::Result<&'static Tokenizer> {
+    TOKENIZER
+        .get_or_init(|| {
+            Tokenizer::from_file(path).map_err(|e| format!("Tokenizer error at {}: {}", path, e))
+        })
+        .as_ref()
+        .map_err(|e| anyhow::anyhow!("{}", e))
+}
+
 pub struct BgeChunker {
-    tokenizer: Tokenizer,
+    tokenizer: &'static Tokenizer,
 }
 
 impl BgeChunker {
     pub fn new(path: &str) -> anyhow::Result<Self> {
-        let tokenizer = Tokenizer::from_file(path)
-            .map_err(|e| anyhow::anyhow!("Tokenizer error at {}: {}", path, e))?;
-        Ok(Self { tokenizer })
+        Ok(Self {
+            tokenizer: load_tokenizer(path)?,
+        })
     }
 
     pub fn split_sentences(&self, text: &str) -> Vec<String> {
         let text_clean = text.replace('\n', " ");
-        let re = Regex::new(r"([.!?])\s+([A-ZÅÄÖ])").unwrap();
         let mut sentences = Vec::new();
         let mut start = 0;
-
-        for cap in re.captures_iter(&text_clean) {
+        for cap in SENTENCE_RE.captures_iter(&text_clean) {
             let end = cap.get(1).unwrap().end();
             let sentence = text_clean[start..end].trim();
             if !sentence.is_empty() {
@@ -28,14 +40,12 @@ impl BgeChunker {
             }
             start = end;
         }
-
         if start < text_clean.len() {
             let sentence = text_clean[start..].trim();
             if !sentence.is_empty() {
                 sentences.push(sentence.to_string());
             }
         }
-
         sentences
     }
 

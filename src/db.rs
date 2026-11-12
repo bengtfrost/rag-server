@@ -15,11 +15,11 @@ impl Db {
                 | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX,
         )?;
 
-        let ext_path = std::env::var("SQLITE_VEC_PATH").unwrap_or_else(|_| "vec0".to_string());
+        let ext_path = resolve_vec_extension();
 
         unsafe {
             conn.load_extension_enable()?;
-            conn.load_extension(ext_path, Some("sqlite3_vec_init"))?;
+            conn.load_extension(&ext_path, Some("sqlite3_vec_init"))?;
             conn.load_extension_disable()?;
         }
 
@@ -291,6 +291,10 @@ impl Db {
 
     // ===== SEARCH METHODS =====
 
+    /// Vector (ANN) search. Returns `(chunk_id, text, distance)` ordered
+    /// best-first. `distance` is sqlite-vec's distance value — lower is
+    /// better (closer). Callers that only need IDs should ignore the
+    /// distance column.
     pub fn search(
         &self,
         coll: &str,
@@ -317,6 +321,10 @@ impl Db {
         Ok(res)
     }
 
+    /// BM25 (FTS5) search. Returns `(chunk_id, score)` ordered best-first.
+    /// SQLite FTS5 `bm25()` returns negative values where **more negative**
+    /// is better, and `ORDER BY bm25(...)` ascending therefore puts the
+    /// best match first.
     pub fn bm25_search(&self, coll: &str, query: &str, k: usize) -> Result<Vec<(String, f64)>> {
         let mut stmt = self.conn.prepare(
             "SELECT id, bm25(docs_fts) as score
@@ -339,6 +347,11 @@ impl Db {
 
     // ===== HYBRID SEARCH =====
 
+    /// Combine ANN and BM25 result sets using weighted min-max-normalized
+    /// **similarity** (1 = best, 0 = worst, missing channel = 0).
+    ///
+    /// Returns `(chunk_id, text, distance)` ordered best-first, using the
+    /// same "lower = better" convention as [`Db::search`].
     pub fn hybrid_search(
         &self,
         coll: &str,
@@ -351,67 +364,109 @@ impl Db {
         let vector_results = self.search(coll, emb, k * 2)?;
         let bm25_results = self.bm25_search(coll, query_text, k * 2)?;
 
-        let vector_scores: Vec<(String, f64)> = vector_results
+        // Both raw streams are "extremes toward min = best":
+        //   - sqlite-vec: smaller distance = closer
+        //   - FTS5 bm25:  more negative     = better match
+        // `to_similarity` flips both into [0, 1] with 1 = best.
+        let vector_raw: Vec<(String, f64)> = vector_results
             .iter()
-            .map(|(id, _, score)| (id.clone(), *score as f64))
+            .map(|(id, _, distance)| (id.clone(), *distance as f64))
             .collect();
-        let vector_norm = Self::normalize_scores(&vector_scores);
-        let bm25_norm = Self::normalize_scores(&bm25_results);
+        let vector_sim = to_similarity(&vector_raw);
+        let bm25_sim = to_similarity(&bm25_results);
 
+        // Combined similarity per chunk. A chunk missing from one channel
+        // contributes 0 to that channel — it does *not* inherit "perfect
+        // match" from the min-max normalization of the other channel.
         let mut combined: HashMap<String, (f64, f64)> = HashMap::new();
-        for (id, score) in vector_norm {
-            combined.entry(id).or_insert((0.0, 0.0)).0 = score;
+        for (id, sim) in vector_sim {
+            combined.entry(id).or_insert((0.0, 0.0)).0 = sim;
         }
-        for (id, score) in bm25_norm {
-            combined.entry(id).or_insert((0.0, 0.0)).1 = score;
+        for (id, sim) in bm25_sim {
+            combined.entry(id).or_insert((0.0, 0.0)).1 = sim;
         }
 
-        let mut scored_ids: Vec<(String, f64)> = combined
+        // Higher combined similarity = better. Sort DESCENDING by similarity.
+        let mut scored: Vec<(String, f64)> = combined
             .into_iter()
-            .map(|(id, (v_score, b_score))| (id, v_score * vector_weight + b_score * bm25_weight))
+            .map(|(id, (v_sim, b_sim))| (id, v_sim * vector_weight + b_sim * bm25_weight))
             .collect();
 
-        scored_ids.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
-        scored_ids.truncate(k);
+        scored.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+        scored.truncate(k);
 
-        let ids: Vec<String> = scored_ids.iter().map(|(id, _)| id.clone()).collect();
+        let ids: Vec<String> = scored.iter().map(|(id, _)| id.clone()).collect();
         let chunk_texts = self.get_chunk_texts(&ids)?;
 
-        let mut result = Vec::new();
-        for (id, combined_score) in scored_ids {
+        // Preserve `scored` order and return *distance* (0 = best) so callers
+        // that mix `search` and `hybrid_search` see a consistent contract.
+        let mut result = Vec::with_capacity(scored.len());
+        for (id, sim) in &scored {
             if let Some((_, text, parent)) =
-                chunk_texts.iter().find(|(chunk_id, _, _)| chunk_id == &id)
+                chunk_texts.iter().find(|(chunk_id, _, _)| chunk_id == id)
             {
-                let distance = 1.0 - combined_score.min(1.0);
-                result.push((id, text.clone(), parent.clone(), distance));
+                let distance = 1.0 - sim.clamp(0.0, 1.0);
+                result.push((id.clone(), text.clone(), parent.clone(), distance));
             }
         }
 
-        result.sort_by(|a, b| a.3.partial_cmp(&b.3).unwrap_or(std::cmp::Ordering::Equal));
         Ok(result
             .into_iter()
             .map(|(id, text, _, dist)| (id, text, dist))
             .collect())
     }
+}
 
-    fn normalize_scores(scores: &[(String, f64)]) -> Vec<(String, f64)> {
-        if scores.is_empty() {
-            return Vec::new();
-        }
-        let max_score = scores
-            .iter()
-            .map(|(_, s)| *s)
-            .fold(f64::NEG_INFINITY, f64::max);
-        let min_score = scores.iter().map(|(_, s)| *s).fold(f64::INFINITY, f64::min);
-        let range = max_score - min_score;
-        if range == 0.0 {
-            return scores.iter().map(|(id, _)| (id.clone(), 0.5)).collect();
-        }
-        scores
-            .iter()
-            .map(|(id, s)| (id.clone(), (s - min_score) / range))
-            .collect()
+/// Normalize a raw score stream to similarity ∈ [0, 1]: best → 1.0,
+/// worst → 0.0.
+///
+/// Correct for both sqlite-vec distances (lower = better) and FTS5 bm25
+/// scores (more negative = better) because in both cases the *best* value
+/// is the minimum of the raw stream.
+fn to_similarity(scores: &[(String, f64)]) -> Vec<(String, f64)> {
+    if scores.is_empty() {
+        return Vec::new();
     }
+    let max = scores
+        .iter()
+        .map(|(_, s)| *s)
+        .fold(f64::NEG_INFINITY, f64::max);
+    let min = scores.iter().map(|(_, s)| *s).fold(f64::INFINITY, f64::min);
+    let range = max - min;
+    if range == 0.0 {
+        // All raw scores are identical — treat every item as a perfect match
+        // so the channel does not distort the weighted combination.
+        return scores.iter().map(|(id, _)| (id.clone(), 1.0)).collect();
+    }
+    scores
+        .iter()
+        .map(|(id, s)| (id.clone(), (max - s) / range))
+        .collect()
+}
+
+/// Resolve the sqlite-vec extension path.
+///
+/// Order of preference:
+/// 1. `$SQLITE_VEC_PATH` (explicit override).
+/// 2. The bundled extension under `./extensions/`, so a fresh clone works
+///    with zero environment variables.
+/// 3. A bare `"vec0"`, which lets the system dynamic loader find a
+///    system-installed extension.
+fn resolve_vec_extension() -> String {
+    if let Ok(path) = std::env::var("SQLITE_VEC_PATH") {
+        return path;
+    }
+    let candidates = [
+        "extensions/vec0.so",
+        "extensions/vec0.dylib",
+        "extensions/vec0.dll",
+    ];
+    for candidate in candidates {
+        if std::path::Path::new(candidate).is_file() {
+            return candidate.to_string();
+        }
+    }
+    "vec0".to_string()
 }
 
 /// Delete every chunk belonging to `doc_id` in `collection`.

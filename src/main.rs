@@ -14,6 +14,8 @@ use std::io::{self, BufRead};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::Mutex;
+use tracing::{debug, info, warn};
+use tracing_subscriber::{EnvFilter, fmt};
 
 use crate::config::Config;
 use crate::db::Db;
@@ -22,7 +24,7 @@ use crate::tools::*;
 #[derive(Parser)]
 #[command(name = "rag-server")]
 #[command(about = "Sovereign Rust RAG Server with local embedding and reranking")]
-#[command(version = "2.4.0")]
+#[command(version = "2.4.1")]
 struct Cli {
     #[command(subcommand)]
     command: Option<Commands>,
@@ -50,6 +52,19 @@ enum Commands {
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
+    // Logs MUST go to stderr — stdout is the JSON-RPC transport.
+    // `println!` on stdout is line-buffered, so every JSON-RPC response
+    // is flushed automatically; any stray log line on stdout would corrupt
+    // the protocol.
+    fmt()
+        .with_env_filter(
+            EnvFilter::try_from_default_env()
+                .unwrap_or_else(|_| EnvFilter::new("rag_server_mcp=debug,info")),
+        )
+        .with_writer(std::io::stderr)
+        .with_target(false)
+        .init();
+
     let cli = Cli::parse();
     if let Some(command) = cli.command {
         run_cli(command).await?;
@@ -71,17 +86,28 @@ async fn run_server() -> anyhow::Result<()> {
             .build()?,
     );
 
-    eprintln!("[*] Sovereign Rust RAG Server startad...");
+    info!(
+        db = %cfg.db_path,
+        tokenizer = %cfg.tokenizer_path,
+        embed_url = %cfg.embed_url,
+        rerank_url = %cfg.rerank_url,
+        timeout_secs = cfg.timeout_secs,
+        "Sovereign Rust RAG Server listening on stdio"
+    );
 
     let stdin = io::stdin();
     for line in stdin.lock().lines() {
         let req_text = line?;
         let req: Value = match serde_json::from_str(&req_text) {
             Ok(v) => v,
-            Err(_) => continue,
+            Err(e) => {
+                warn!(error = %e, "Dropping malformed JSON-RPC line");
+                continue;
+            }
         };
 
         let method = req["method"].as_str().unwrap_or("");
+        debug!(method, "Received JSON-RPC request");
 
         match method {
             "initialize" => {
@@ -100,7 +126,7 @@ async fn run_server() -> anyhow::Result<()> {
                 println!("{}", resp);
             }
             "notifications/initialized" => {
-                eprintln!("[*] Client initialized connection.");
+                info!("Client completed MCP initialization handshake");
             }
             "tools/list" => {
                 let resp = json!({
@@ -119,7 +145,7 @@ async fn run_server() -> anyhow::Result<()> {
                 let db = Arc::clone(&db);
                 let client = Arc::clone(&client);
 
-                eprintln!("[*] Executing tool call: {}", tool_name);
+                info!(tool = %tool_name, "Executing tool call");
 
                 // Spawn so a panic in a tool becomes an isolated task failure
                 // instead of taking down the whole server process.
@@ -136,28 +162,37 @@ async fn run_server() -> anyhow::Result<()> {
                             "content": [{"type": "text", "text": result_text}]
                         }
                     }),
-                    Ok(Err(e)) => json!({
-                        "jsonrpc": "2.0",
-                        "id": id,
-                        "error": {
-                            "code": -32000,
-                            "message": e.to_string()
-                        }
-                    }),
-                    Err(join_err) => json!({
-                        "jsonrpc": "2.0",
-                        "id": id,
-                        "error": {
-                            "code": -32603,
-                            "message": format!("Internal error: {}", join_err)
-                        }
-                    }),
+                    Ok(Err(e)) => {
+                        warn!(error = %e, "Tool call returned an error");
+                        json!({
+                            "jsonrpc": "2.0",
+                            "id": id,
+                            "error": {
+                                "code": -32000,
+                                "message": e.to_string()
+                            }
+                        })
+                    }
+                    Err(join_err) => {
+                        warn!(error = %join_err, "Tool call panicked");
+                        json!({
+                            "jsonrpc": "2.0",
+                            "id": id,
+                            "error": {
+                                "code": -32603,
+                                "message": format!("Internal error: {}", join_err)
+                            }
+                        })
+                    }
                 };
                 println!("{}", resp);
             }
-            _ => {}
+            other => {
+                debug!(method = other, "Ignoring unhandled method");
+            }
         }
     }
+    info!("stdin closed; shutting down cleanly");
     Ok(())
 }
 
