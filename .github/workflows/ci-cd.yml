@@ -163,17 +163,14 @@ jobs:
   # ---------------------------------------------------------------------------
   # Smoke test — runs against the image this run just built.
   #
-  # Fix vs. previous version: pull by `sha-<commit>` instead of `:latest`.
+  # Pull by `sha-<commit>`, not `:latest` — the sha tag was created by this
+  # build run, so pull-then-test is deterministic. `needs: build` guarantees
+  # the push completed before this job starts.
   #
-  # The previous run failed the version check even though the source at HEAD
-  # had `#[command(version)]` and Cargo.toml had `2.4.3`. The image it pulled
-  # was the *previous* :latest — the v2.4.3 release build, whose source still
-  # had `#[command(version = "2.4.2")]`. Pulling by sha eliminates the tag-
-  # alias race: the sha tag was created by this build run, so if the pull
-  # succeeds, it's the right image.
-  #
-  # The final step still verifies :latest points at the same digest, so a
-  # genuinely-broken tag-update is caught rather than silently rolled back.
+  # All CLI checks assert *output*, not just exit code. Earlier versions
+  # passed `--help` while `--version` silently produced nothing, so the
+  # pipeline reported success on three steps that proved nothing. Now each
+  # `--help` step asserts non-empty combined stdout+stderr.
   # ---------------------------------------------------------------------------
   smoke-test:
     needs: [build, lint]
@@ -202,44 +199,102 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      # Pull the specific image this workflow run pushed. The sha tag is
-      # created by the build job just above; `needs: build` guarantees the
-      # push completed before this step runs. No tag-alias race.
       - name: Pull image (by sha — the just-pushed one)
         run: docker pull "${IMAGE}:sha-${{ github.sha }}"
 
       - name: Image digest and creation time
         run: |
           docker inspect "${IMAGE}:sha-${{ github.sha }}" --format '
-            Ref:      ${IMAGE}:sha-${{ github.sha }}
+            Ref:      '"${IMAGE}"':sha-${{ github.sha }}
             ID:       {{.Id}}
             Created:  {{.Created}}
             Arch:     {{.Architecture}}
             OS:       {{.Os}}
           '
 
-      - name: CLI — help
-        run: docker run --rm "${IMAGE}:sha-${{ github.sha }}" --help
+      # -----------------------------------------------------------------------
+      # Diagnostic — show what the binary actually produces for each flag on
+      # each stream. Runs first so the version check has a reference point:
+      # if --help has stdout but --version doesn't, the binary is misbehaving;
+      # if both are silent, the container isn't running the binary; if
+      # --version has output on stderr only, the version check catches it
+      # (it now reads both streams).
+      # -----------------------------------------------------------------------
+      - name: Diagnostic — flag behaviour on stdout / stderr
+        run: |
+          IMG="${IMAGE}:sha-${{ github.sha }}"
+          echo "=== --help: stdout ==="
+          docker run --rm "$IMG" --help 2>/dev/null | head -5
+          echo "=== --help: stderr ==="
+          docker run --rm "$IMG" --help 2>&1 >/dev/null | head -5
+          echo "=== --version: stdout ==="
+          docker run --rm "$IMG" --version 2>/dev/null
+          echo "=== --version: stderr ==="
+          docker run --rm "$IMG" --version 2>&1 >/dev/null
+          echo "=== -V (short flag): combined ==="
+          docker run --rm "$IMG" -V 2>&1
+          echo "=== end diagnostic ==="
 
-      - name: CLI — query help
-        run: docker run --rm "${IMAGE}:sha-${{ github.sha }}" query --help
+      - name: CLI — help produces output
+        run: |
+          out=$(docker run --rm "${IMAGE}:sha-${{ github.sha }}" --help 2>&1)
+          if [ -z "$out" ]; then
+            echo "::error::--help produced no output on stdout or stderr"
+            exit 1
+          fi
+          echo "✓ --help produced ${#out} bytes"
 
-      - name: CLI — ingest-file help
-        run: docker run --rm "${IMAGE}:sha-${{ github.sha }}" ingest-file --help
+      - name: CLI — query help produces output
+        run: |
+          out=$(docker run --rm "${IMAGE}:sha-${{ github.sha }}" query --help 2>&1)
+          if [ -z "$out" ]; then
+            echo "::error::query --help produced no output on stdout or stderr"
+            exit 1
+          fi
+          echo "✓ query --help produced ${#out} bytes"
+
+      - name: CLI — ingest-file help produces output
+        run: |
+          out=$(docker run --rm "${IMAGE}:sha-${{ github.sha }}" ingest-file --help 2>&1)
+          if [ -z "$out" ]; then
+            echo "::error::ingest-file --help produced no output on stdout or stderr"
+            exit 1
+          fi
+          echo "✓ ingest-file --help produced ${#out} bytes"
 
       - name: CLI — version matches Cargo.toml
         run: |
           expected="${{ steps.get_version.outputs.version }}"
-          out=$(docker run --rm "${IMAGE}:sha-${{ github.sha }}" --version)
-          # clap's --version prints "<name> <version>"; take the last token.
-          actual=$(printf '%s' "$out" | awk '{print $NF}')
+
+          # Capture both streams separately, then print both. If --version
+          # ends up on stderr for any reason (Docker log driver, clap
+          # configuration, wrapper), this catches it. If it's on stdout,
+          # this catches it. If neither has output, the Diagnostic step
+          # above already showed the full picture.
+          docker run --rm "${IMAGE}:sha-${{ github.sha }}" --version \
+            > /tmp/version.out 2> /tmp/version.err
+          exit_code=$?
+
+          echo "Exit code:  $exit_code"
+          echo "--- stdout ---"
+          cat /tmp/version.out
+          echo "--- stderr ---"
+          cat /tmp/version.err
+          echo "--- end ---"
+
+          # Prefer stdout, fall back to stderr. Strip CR (from any CRLF
+          # artefact) and pick the last x.y.z token — clap prints
+          # "<name> <version>", so the last token is the version.
+          combined=$(cat /tmp/version.out /tmp/version.err | tr -d '\r')
+          actual=$(printf '%s' "$combined" | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | tail -1)
 
           echo "Cargo.toml:  '$expected'"
-          echo "Image:       '$out'"
+          echo "Combined:    '$combined'"
           echo "Extracted:   '$actual'"
 
           if [ "$actual" != "$expected" ]; then
-            echo "::error::--version mismatch. Cargo.toml='$expected', image printed '$out' (extracted '$actual'). Likely causes: (1) src/main.rs has #[command(version = \"...\")] hardcoded instead of #[command(version)]; (2) the sha tag is stale (rerun the build)."
+            echo "::error::--version mismatch. Cargo.toml='$expected', image output='$combined' (extracted '$actual')."
+            echo "::error::If --version produced no output at all, the binary isn't responding to the flag inside the container — see the Diagnostic step above."
             exit 1
           fi
 
