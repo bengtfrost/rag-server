@@ -1,4 +1,4 @@
-🚀 Sovereign RAG MCP Server (Rust) — v2.4.3
+🚀 Sovereign RAG MCP Server (Rust) — v2.4.4
 
 [![CI/CD Pipeline](https://github.com/bengtfrost/rag-server/actions/workflows/ci-cd.yml/badge.svg)](https://github.com/bengtfrost/rag-server/actions/workflows/ci-cd.yml)
 [![Container](https://img.shields.io/badge/ghcr.io-rag--server-blue?logo=docker)](https://github.com/bengtfrost/rag-server/pkgs/container/rag-server)
@@ -10,6 +10,13 @@
 A "Native & Lean" implementation of a Retrieval-Augmented Generation (RAG) server written in **Rust**. This server exposes high-precision search logic via the **Model Context Protocol (MCP)**, specifically optimized for **Void GNU/Linux** and **Intel iGPU (Vulkan)** hardware.
 
 By bypassing the "PCIe dinosaur" and utilizing **Unified Memory Architecture (UMA)**, this server provides the lightning-fast "memory" required for autonomous agents like **Goose** and **Aider**.
+
+> **Latest release: v2.4.4 — container build fix.** **Do not pull
+> `ghcr.io/bengtfrost/rag-server:v2.4.3`** — that image was built from a
+> broken container cache and ships a dummy `fn main() {}` binary (silent
+> CLI, no output). Source builds from the `v2.4.3` tag are unaffected. See
+> [Changelog → v2.4.4](#v244-2026-11-15) and
+> [Troubleshooting → "The binary runs but does nothing"](#the-binary-runs-but-does-nothing-empty-output-exit-0).
 
 > **Binary name.** The Cargo package and binary are `rag-server-mcp` (see `Cargo.toml`). Earlier revisions of this README used `rag-server` in examples; if your Goose config or shell aliases still point at `rag-server`, either update them or add a symlink:
 >
@@ -147,12 +154,24 @@ sqlite3 ~/.config/rag-server/vectors.db \
    SELECT rowid, id, collection, text FROM docs;"
 ```
 
-### 5. Upgrade Notes (v2.4.2 → v2.4.3)
+### 5. Upgrade Notes (v2.4.2 → v2.4.4)
 
-v2.4.3 is a **documentation + fail-fast** update over v2.4.2. Existing databases open unchanged; existing env files keep working.
+Two releases, both behaviour-compatible with v2.4.2. Existing databases open unchanged; existing env files keep working.
+
+- **v2.4.3 — fail-fast on missing `vec0`.** (Below.)
+- **v2.4.4 — container build fix.** The `v2.4.3` container image shipped a dummy `fn main() {}` binary (silent CLI, exit 0 with no output). If you pulled that image, delete it locally and re-pull `v2.4.4`:
+
+  ```bash
+  docker rmi ghcr.io/bengtfrost/rag-server:v2.4.3 ghcr.io/bengtfrost/rag-server:latest 2>/dev/null
+  docker pull ghcr.io/bengtfrost/rag-server:v2.4.4
+  ```
+
+  Source builds from the `v2.4.3` tag are unaffected — the Rust crate itself compiles normally. The bug was in the Docker build path only (Containerfile cache-trick + mtime interaction).
+
+The v2.4.3 changes, documented in full below (they were missing from the v2.4.2 tag's README, hence their prominence here):
 
 - **Startup fails fast on a missing `vec0`.** If the extension can't be located — via `RAG_VEC0_EXTENSION_PATH`, `SQLITE_VEC_PATH` (legacy alias), or the auto-resolved `resources/extensions/vec0.{so,dylib,dll}` — `rag-server-mcp` now refuses to start with one actionable error. Previously it emitted a `WARN` and then died inside `Db::new()` with SQLite's cryptic `…/vec0.so.so: cannot open shared object file`. That was the exact symptom of a stale env var pointing at a moved file. Now the error names the resolved path and the three remedies.
-- **v2.4.2 docs finally land.** The v2.4.2 tag shipped with the v2.4.1 README — the resource layout rewrite (`resources/tokenizer.json`, `resources/extensions/`), the `RAG_RESOURCES_DIR` and `RAG_VEC0_EXTENSION_PATH` env vars, the three-tier resolution, and the full v2.4.2 changelog entry were all missing from the tag. This release's README includes them.
+- **v2.4.2 docs finally land.** The v2.4.2 tag shipped with the v2.4.1 README — the resource layout rewrite (`resources/tokenizer.json`, `resources/extensions/`), the `RAG_RESOURCES_DIR` and `RAG_VEC0_EXTENSION_PATH` env vars, the three-tier resolution, and the full v2.4.2 changelog entry were all missing from the tag. The v2.4.3 README included them.
 
 The v2.4.2 changes, documented in full below (they were missing from the v2.4.2 tag's README, hence their prominence here):
 
@@ -604,6 +623,25 @@ Pre-v2.4.3 builds instead showed `…/vec0.so.so: cannot open shared object file
 
 > **Note on stale shells.** Editing `.zshenv` to remove a `SQLITE_VEC_PATH` export does not unset it in shells that were already running. `exec zsh -l` inherits the parent's environment, so it carries the old value forward. Open a fresh terminal, or `unset SQLITE_VEC_PATH RAG_VEC0_EXTENSION_PATH` in the current one, then re-run.
 
+### The binary runs but does nothing (empty output, exit 0)
+
+Almost certainly the v2.4.3 dummy-binary bug. Check:
+
+```bash
+docker run --rm ghcr.io/bengtfrost/rag-server:latest --version
+```
+
+If that produces **no output and exits 0** (rather than `rag-server 2.4.4`), your local Docker cache is serving the broken v2.4.3 image. Fix:
+
+```bash
+docker pull ghcr.io/bengtfrost/rag-server:v2.4.4
+docker rmi ghcr.io/bengtfrost/rag-server:v2.4.3 ghcr.io/bengtfrost/rag-server:latest 2>/dev/null
+```
+
+Then use `:v2.4.4` (or re-pull `:latest`, which now points at the working image). Source builds are unaffected — `cargo build --release && ./target/release/rag-server-mcp --version` always worked.
+
+The root cause: the v2.4.3 Containerfile used the standard dependency-cache trick (`COPY Cargo.toml Cargo.lock` → build dummy `fn main() {}` → `COPY . .` → `cargo build`), and the `COPY . .` preserved source mtimes as _older_ than the dummy binary. Cargo's freshness check skipped the rebuild, and the dummy was `cp`'d to `/usr/local/bin/rag-server-mcp`. Fixed in v2.4.4 by `cargo clean --release -p` + `touch` before the second `cargo build`.
+
 ### `hybrid_search` returns suspiciously bad results
 
 Fixed in v2.4.1. The old code sorted `combined_score` (a distance — lower = better) _descending_, so `truncate(k)` returned the _worst_ matches. Upgrade and re-run.
@@ -631,7 +669,22 @@ Hard fail by design — a 0 chunk size panics the chunker. Same for `RAG_BATCH_S
 
 ## 📝 Change Log
 
+### v2.4.4 (2026-11-15)
+
+**Container build fix — the v2.4.3 image shipped a dummy binary.**
+
+The v2.4.3 container image (`ghcr.io/bengtfrost/rag-server:v2.4.3`) was built from a Containerfile whose dependency-cache trick was shipping `fn main() {}` instead of the real binary. Symptoms: `--help` and `--version` exit 0 with no output, every CLI invocation silently does nothing. Source builds (`cargo build --release` locally) were unaffected — the bug was in the Docker build path only.
+
+- **Root cause.** `COPY . .` preserves the source files' mtimes from `actions/checkout` (~T+0s). The dummy binary built in the preceding layer has mtime from a few minutes in (~T+11min). Cargo's freshness check saw the source as _older_ than the binary and skipped rebuild — the final `cp target/release/rag-server-mcp` shipped the dummy.
+- **Fix.** `cargo clean --release -p rag-server-mcp` (the `--release` flag is critical — plain `cargo clean -p` cleans the dev profile only) plus `find src -name '*.rs' -exec touch {} +` to force source mtimes forward. Belt and braces: either mechanism alone forces the rebuild.
+- **CI diagnostic + output assertions.** The smoke test now asserts `--help`/`--version` **produce output**, not just exit 0. Exit-code-only checks were the reason this bug went undetected for three releases.
+- **Image publishing is now deterministic.** Smoke test pulls by `sha-<commit>` tag instead of `:latest` (eliminates tag-alias race), and verifies `:latest` points at the just-pushed digest as a final gate.
+
+The v2.4.3 tag on GHCR was silently overwritten multiple times during the fix; v2.4.4 is the first tagged release whose image has been verified end-to-end by CI.
+
 ### v2.4.3 (2026-11-16)
+
+> ⚠️ **Container image warning.** The `ghcr.io/bengtfrost/rag-server:v2.4.3` image was built from a broken container cache and ships a dummy `fn main() {}` binary — `--help` and `--version` exit 0 with no output, all CLI invocations silently do nothing. Use **v2.4.4** instead. Source builds from this tag (`cargo build --release`) are unaffected — the bug was in the container build path only.
 
 **Fail-fast startup, and the v2.4.2 release notes finally land.**
 
@@ -728,14 +781,17 @@ The project is continuously built, tested, and published via GitHub Actions.
 
 ### Pipeline stages
 
-| Stage            | Description                                                                                                                     |
-| ---------------- | ------------------------------------------------------------------------------------------------------------------------------- |
-| **Lint**         | `cargo fmt --all --check`, `cargo clippy --all-targets -- -W clippy::pedantic -A clippy::module_name_repetitions`.              |
-| **Build & Push** | Multi-stage `Containerfile` based on **Debian Bookworm** (OpenSSL 3). Builds the Rust binary in a container and pushes to GHCR. |
-| **Smoke Tests**  | Runs basic CLI commands (`--help`, `query --help`, etc.) to verify the image works.                                             |
-| **Cleanup**      | Weekly (Sundays 03:00) cleanup of old images — keeps the 5 latest versions, deletes untagged images.                            |
+| Stage            | Description                                                                                                                                                                                                                                                                                                   |
+| ---------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Preflight**    | ~20 s. Verifies `rust:1.100.0-slim-trixie` and `debian:trixie-slim` pull, both `vec0.so` download URLs return 200, `libssl3t64` exists in Trixie. Fails fast before the ~15 min build if a version pin or URL is wrong.                                                                                       |
+| **Lint**         | `cargo fmt --all --check` and `cargo clippy --all-targets -- -W clippy::pedantic -A clippy::module_name_repetitions -D warnings`. Warnings are errors.                                                                                                                                                        |
+| **Build & Push** | Multi-stage `Containerfile` based on **Debian Trixie** (OpenSSL 3, `libssl3t64`). Builds the multi-arch Rust binary in a container and pushes to GHCR.                                                                                                                                                        |
+| **Smoke Tests**  | Pulls the just-pushed `sha-<commit>` tag (not `:latest`) and asserts **output**, not just exit code: `--help` produces bytes, `--version` matches `Cargo.toml`, and `list-collections` proves `Config::from_env()` + `Db::new()` succeed inside the image. Also verifies `:latest` points at the same digest. |
+| **Cleanup**      | Weekly (Sundays 03:00 UTC). Keeps the 10 most recent tagged images, protects `latest` and every `vX.Y.Z`, deletes untagged images.                                                                                                                                                                            |
 
-> **Container image resources.** The `Containerfile` must copy `resources/tokenizer.json` into the image and build or download `vec0.so` into `resources/extensions/`, then set `RAG_RESOURCES_DIR=/usr/local/share/rag-server/resources`. Without this the image would start but fail at the first vector query — the source tarball on GitHub does **not** include `vec0.so` (it's gitignored). Since v2.4.3 the container fails at startup with a clear "vec0 extension not found" error rather than silently succeeding until the first `query`.
+> **Why `--help`/`--version` output is asserted, not just exit code.** Through v2.4.3 the smoke test only checked exit code, and the image's dummy binary (see [Changelog → v2.4.4](#v244-2026-11-15)) passed `--help` while producing no output. The pipeline reported "three green checks" on a container that did nothing. The v2.4.4 CI rewrite asserts byte counts and version tokens so this class of bug can't recur.
+
+> **Container image resources.** The `Containerfile` copies `resources/tokenizer.json` into the image and downloads `vec0.so` into `resources/extensions/` for the target architecture (via BuildKit's `TARGETARCH`), then sets `RAG_RESOURCES_DIR=/usr/local/share/rag-server/resources`. Without this the image would start but fail at the first vector query — the source tarball on GitHub does **not** include `vec0.so` (it's gitignored). Since v2.4.3 the container fails at startup with a clear "vec0 extension not found" error rather than silently succeeding until the first `query`.
 
 ### Multi-architecture support
 
@@ -752,9 +808,9 @@ Docker automatically selects the correct architecture when you pull the image.
 
 | Tag            | Description                                                   |
 | -------------- | ------------------------------------------------------------- |
-| `latest`       | Most recent build from the `main` branch.                     |
-| `<commit-sha>` | Exact commit hash for pinpoint rollbacks.                     |
-| `vX.Y.Z`       | Semantic version extracted from `Cargo.toml` (e.g. `v2.4.3`). |
+| `latest`       | Most recent build from the `master` branch.                   |
+| `sha-<commit>` | Exact commit hash for pinpoint rollbacks. Deterministic.      |
+| `vX.Y.Z`       | Semantic version extracted from `Cargo.toml` (e.g. `v2.4.4`). |
 
 ### Container registry
 
@@ -768,8 +824,8 @@ Docker automatically selects the correct architecture when you pull the image.
 # Pull the latest image (auto-selects your architecture)
 docker pull ghcr.io/bengtfrost/rag-server:latest
 
-# Pull a specific version
-docker pull ghcr.io/bengtfrost/rag-server:v2.4.3
+# Pull a specific version — v2.4.4 is the first fully working image
+docker pull ghcr.io/bengtfrost/rag-server:v2.4.4
 
 # Run the binary
 docker run --rm ghcr.io/bengtfrost/rag-server:latest --help
@@ -777,6 +833,8 @@ docker run --rm ghcr.io/bengtfrost/rag-server:latest --help
 # Run in foreground (STDIO MCP server mode)
 docker run --rm -i ghcr.io/bengtfrost/rag-server:latest
 ```
+
+> **Do not pull `v2.4.3`.** That tag's image was built from a broken cache and ships a dummy binary — `--help`/`--version` produce no output. Use `v2.4.4` or `latest`. See [Troubleshooting → "The binary runs but does nothing"](#the-binary-runs-but-does-nothing-empty-output-exit-0) if you already pulled it.
 
 > **Container entrypoint.** The image tag is `rag-server` for convenience, but the binary inside is `rag-server-mcp` (matching `Cargo.toml`). The `Containerfile` handles this; if you've customised it, confirm the entrypoint still points at `rag-server-mcp`.
 
