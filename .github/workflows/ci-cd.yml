@@ -16,16 +16,14 @@ env:
   IMAGE_NAME: ${{ github.repository }}
   # IMAGE must be spelled out at workflow level. `env.REGISTRY`/`env.IMAGE_NAME`
   # cannot be referenced here or in `jobs.<job_id>.env:` — the env context is
-  # not available in those scopes (chicken-and-egg: env is being defined).
-  # `github.repository` IS available, so this produces the same value the
-  # previous `${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}` would have.
+  # not available in those scopes. `github.repository` IS available, so this
+  # produces the same value the previous expression would have.
   IMAGE: ghcr.io/${{ github.repository }}
 
 jobs:
   # ---------------------------------------------------------------------------
   # Preflight — fail in ~30 s if a base image, download URL, or package name
-  # isn't available. Runs before the 15–20 min multi-arch build so a typo in
-  # a version pin doesn't cost 20 minutes of CI time to discover.
+  # isn't available. Runs before the 15–20 min multi-arch build.
   # ---------------------------------------------------------------------------
   preflight:
     runs-on: ubuntu-latest
@@ -105,9 +103,6 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      # Read `version` from the [package] table only — the previous sed
-      # grabbed the first `version = "…"` anywhere, which is fine today but
-      # breaks the day a dependency moves above [package].
       - name: Read version from Cargo.toml
         id: get_version
         run: |
@@ -123,15 +118,6 @@ jobs:
           echo "version=$version" >> "$GITHUB_OUTPUT"
           echo "Resolved version: $version"
 
-      # PRs get a throwaway build with no push and a single sha tag.
-      # Master builds get sha + vX.Y.Z + latest.
-      #
-      # Fixes the previous workflow's two bugs:
-      #   (a) env.VERSION was undefined (version lives at
-      #       steps.get_version.outputs.version), so the third tag rendered
-      #       as literally `:v` — every push overwrote it, no vX.Y.Z ever
-      #       existed on GHCR.
-      #   (b) push ran unconditionally on PRs.
       - name: Compute image tags
         id: tags
         env:
@@ -169,23 +155,25 @@ jobs:
           platforms: linux/amd64,linux/arm64
           push: ${{ github.event_name != 'pull_request' }}
           tags: ${{ steps.tags.outputs.list }}
-          # Supply-chain metadata: SLSA provenance + SPDX SBOM.
           provenance: true
           sbom: true
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
   # ---------------------------------------------------------------------------
-  # Smoke test — runs only on master/dispatch, against the image that was
-  # actually pushed. The `list-collections` step is the one that would have
-  # caught the v2.4.2 resources bug: `--help` exits before Config::from_env()
-  # runs, so a --help-only test passes even when the image has no tokenizer
-  # or vec0.so.
+  # Smoke test — runs against the image this run just built.
   #
-  # NOTE: no job-level `env:` here — IMAGE is inherited from the workflow-level
-  # env block above. Referencing `${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}`
-  # inside `jobs.<job_id>.env:` is rejected by the workflow parser ("env
-  # context is not available at this scope").
+  # Fix vs. previous version: pull by `sha-<commit>` instead of `:latest`.
+  #
+  # The previous run failed the version check even though the source at HEAD
+  # had `#[command(version)]` and Cargo.toml had `2.4.3`. The image it pulled
+  # was the *previous* :latest — the v2.4.3 release build, whose source still
+  # had `#[command(version = "2.4.2")]`. Pulling by sha eliminates the tag-
+  # alias race: the sha tag was created by this build run, so if the pull
+  # succeeds, it's the right image.
+  #
+  # The final step still verifies :latest points at the same digest, so a
+  # genuinely-broken tag-update is caught rather than silently rolled back.
   # ---------------------------------------------------------------------------
   smoke-test:
     needs: [build, lint]
@@ -214,26 +202,46 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Pull image
-        run: docker pull "${IMAGE}:latest"
+      # Pull the specific image this workflow run pushed. The sha tag is
+      # created by the build job just above; `needs: build` guarantees the
+      # push completed before this step runs. No tag-alias race.
+      - name: Pull image (by sha — the just-pushed one)
+        run: docker pull "${IMAGE}:sha-${{ github.sha }}"
+
+      - name: Image digest and creation time
+        run: |
+          docker inspect "${IMAGE}:sha-${{ github.sha }}" --format '
+            Ref:      ${IMAGE}:sha-${{ github.sha }}
+            ID:       {{.Id}}
+            Created:  {{.Created}}
+            Arch:     {{.Architecture}}
+            OS:       {{.Os}}
+          '
 
       - name: CLI — help
-        run: docker run --rm "${IMAGE}:latest" --help
+        run: docker run --rm "${IMAGE}:sha-${{ github.sha }}" --help
 
       - name: CLI — query help
-        run: docker run --rm "${IMAGE}:latest" query --help
+        run: docker run --rm "${IMAGE}:sha-${{ github.sha }}" query --help
 
       - name: CLI — ingest-file help
-        run: docker run --rm "${IMAGE}:latest" ingest-file --help
+        run: docker run --rm "${IMAGE}:sha-${{ github.sha }}" ingest-file --help
 
       - name: CLI — version matches Cargo.toml
         run: |
-          out=$(docker run --rm "${IMAGE}:latest" --version)
-          echo "$out"
-          echo "$out" | grep -q "${{ steps.get_version.outputs.version }}" || {
-            echo "::error::--version output does not match Cargo.toml"
+          expected="${{ steps.get_version.outputs.version }}"
+          out=$(docker run --rm "${IMAGE}:sha-${{ github.sha }}" --version)
+          # clap's --version prints "<name> <version>"; take the last token.
+          actual=$(printf '%s' "$out" | awk '{print $NF}')
+
+          echo "Cargo.toml:  '$expected'"
+          echo "Image:       '$out'"
+          echo "Extracted:   '$actual'"
+
+          if [ "$actual" != "$expected" ]; then
+            echo "::error::--version mismatch. Cargo.toml='$expected', image printed '$out' (extracted '$actual'). Likely causes: (1) src/main.rs has #[command(version = \"...\")] hardcoded instead of #[command(version)]; (2) the sha tag is stale (rerun the build)."
             exit 1
-          }
+          fi
 
       # The real resources check: calls Config::from_env() and then Db::new(),
       # so it fails if $RAG_RESOURCES_DIR/tokenizer.json or .../vec0.so are
@@ -246,7 +254,7 @@ jobs:
           docker run --rm \
             -e RUST_LOG=info \
             -e RAG_DB_PATH=/tmp/smoke.db \
-            "${IMAGE}:latest" \
+            "${IMAGE}:sha-${{ github.sha }}" \
             list-collections > /tmp/smoke.log 2>&1
           code=$?
           cat /tmp/smoke.log
@@ -260,5 +268,22 @@ jobs:
           }
           if grep -qi "vec0 extension not found" /tmp/smoke.log; then
             echo "::error::vec0 extension not found in image"
+            exit 1
+          fi
+
+      # Final gate: :latest must point at the same digest as the sha tag.
+      # If this fails, the image works but the tag-alias is broken — a real
+      # bug in the publish step, not in the image.
+      - name: Verify :latest points at the sha image
+        run: |
+          docker pull "${IMAGE}:latest"
+          sha_digest=$(docker inspect "${IMAGE}:sha-${{ github.sha }}" \
+            --format '{{index .RepoDigests 0}}' | awk -F@ '{print $2}')
+          latest_digest=$(docker inspect "${IMAGE}:latest" \
+            --format '{{index .RepoDigests 0}}' | awk -F@ '{print $2}')
+          echo "sha digest:    $sha_digest"
+          echo "latest digest: $latest_digest"
+          if [ "$sha_digest" != "$latest_digest" ]; then
+            echo "::error::${IMAGE}:latest does not point at the just-pushed image (${IMAGE}:sha-${{ github.sha }}). Publish step or tag-alias is broken."
             exit 1
           fi
