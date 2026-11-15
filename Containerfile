@@ -56,7 +56,29 @@ COPY . .
 # Regression guard: if the binary at target/release/rag-server-mcp is
 # suspiciously small (~300 KB), the fix didn't apply and the dummy
 # shipped. The real binary with all deps linked is ~8–10 MB.
-RUN cargo clean -p rag-server-mcp \
+# Force cargo to rebuild the local crate.
+#
+# The `COPY . .` above preserves source mtimes from actions/checkout
+# (~T+0s). The dummy binary built in the previous layer has mtime from
+# ~T+11min. Cargo's freshness check sees source as older than the binary
+# and skips rebuild — without forcing, this layer just cp'd the dummy
+# `fn main() {}` binary.
+#
+# Two independent mechanisms, both needed:
+#
+#   1. `cargo clean --release -p` — the `--release` flag is CRITICAL.
+#      Plain `cargo clean -p <pkg>` cleans the *dev* profile only. Our
+#      build is release, so a plain clean is a no-op that leaves the
+#      dummy binary and release fingerprint untouched.
+#
+#   2. `find src -name '*.rs' -exec touch {} +` — updates all source
+#      mtimes to "now", making source strictly newer than the dummy
+#      binary. Cargo invalidates the fingerprint and rebuilds regardless
+#      of any profile-clean quirk.
+#
+# Belt-and-braces: if (1) somehow fails, (2) still forces the rebuild.
+RUN cargo clean --release -p rag-server-mcp \
+    && find src -name '*.rs' -exec touch {} + \
     && cargo build --release --locked \
     && cp target/release/rag-server-mcp /usr/local/bin/rag-server-mcp \
     && ls -lh /usr/local/bin/rag-server-mcp
