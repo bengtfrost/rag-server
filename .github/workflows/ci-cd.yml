@@ -14,6 +14,12 @@ concurrency:
 env:
   REGISTRY: ghcr.io
   IMAGE_NAME: ${{ github.repository }}
+  # IMAGE must be spelled out at workflow level. `env.REGISTRY`/`env.IMAGE_NAME`
+  # cannot be referenced here or in `jobs.<job_id>.env:` — the env context is
+  # not available in those scopes (chicken-and-egg: env is being defined).
+  # `github.repository` IS available, so this produces the same value the
+  # previous `${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}` would have.
+  IMAGE: ghcr.io/${{ github.repository }}
 
 jobs:
   # ---------------------------------------------------------------------------
@@ -69,9 +75,8 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      # NOTE: dtolnay/rust-toolchain@stable IGNORES the `toolchain:` input —
-      # the ref name is the toolchain. To pin an exact version, use @master
-      # with an explicit `toolchain:`.
+      # dtolnay/rust-toolchain@stable IGNORES the `toolchain:` input — the ref
+      # name is the toolchain. To pin an exact version, use @master.
       - name: Install Rust 1.100.0
         uses: dtolnay/rust-toolchain@master
         with:
@@ -97,8 +102,6 @@ jobs:
     permissions:
       contents: read
       packages: write
-    outputs:
-      version: ${{ steps.get_version.outputs.version }}
     steps:
       - uses: actions/checkout@v7
 
@@ -166,9 +169,7 @@ jobs:
           platforms: linux/amd64,linux/arm64
           push: ${{ github.event_name != 'pull_request' }}
           tags: ${{ steps.tags.outputs.list }}
-          # Supply-chain metadata: SLSA provenance + SPDX SBOM. Comment out
-          # on first run if the runner doesn't support attestations, restore
-          # after the pipeline is green.
+          # Supply-chain metadata: SLSA provenance + SPDX SBOM.
           provenance: true
           sbom: true
           cache-from: type=gha
@@ -180,6 +181,11 @@ jobs:
   # caught the v2.4.2 resources bug: `--help` exits before Config::from_env()
   # runs, so a --help-only test passes even when the image has no tokenizer
   # or vec0.so.
+  #
+  # NOTE: no job-level `env:` here — IMAGE is inherited from the workflow-level
+  # env block above. Referencing `${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}`
+  # inside `jobs.<job_id>.env:` is rejected by the workflow parser ("env
+  # context is not available at this scope").
   # ---------------------------------------------------------------------------
   smoke-test:
     needs: [build, lint]
@@ -188,8 +194,6 @@ jobs:
     permissions:
       contents: read
       packages: read
-    env:
-      IMAGE: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
     steps:
       - uses: actions/checkout@v7
 
