@@ -141,11 +141,12 @@ impl Config {
         }
 
         if !self.vec0_extension_available() {
-            warn!(
-                path = %self.vec0_extension_path,
-                "vec0 extension not found on disk — vector search will fail \
-                 if requested. Build it in the Containerfile, install sqlite-vec \
-                 system-wide, or set RAG_VEC0_EXTENSION_PATH."
+            bail!(
+                "vec0 extension not found at '{}'. Since v2.4.2 it is gitignored \
+         and must be downloaded into resources/extensions/ once (see \
+         README §1), installed sqlite-vec system-wide, or pointed at \
+         explicitly via RAG_VEC0_EXTENSION_PATH.",
+                self.vec0_extension_path
             );
         }
 

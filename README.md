@@ -1,4 +1,4 @@
-🚀 Sovereign RAG MCP Server (Rust) — v2.4.1
+🚀 Sovereign RAG MCP Server (Rust) — v2.4.3
 
 [![CI/CD Pipeline](https://github.com/bengtfrost/rag-server/actions/workflows/ci-cd.yml/badge.svg)](https://github.com/bengtfrost/rag-server/actions/workflows/ci-cd.yml)
 [![Container](https://img.shields.io/badge/ghcr.io-rag--server-blue?logo=docker)](https://github.com/bengtfrost/rag-server/pkgs/container/rag-server)
@@ -66,7 +66,7 @@ graph TD
 - **BGE-M3 (port 11435):** Generates high-quality multilingual embeddings for semantic search.
 - **Reranker (port 11436 / 11437):** Cross-encoder models for precision reranking (BGE for Swedish, Mxbai for English).
 - **SQLite-Vec + FTS5:** Vector search + BM25 keyword search in the same database.
-- **Query Cache:** In-memory LRU cache with 5-minute TTL for repeated queries.
+- **Query Cache:** In-memory LRU cache with 5-minute TTL, race-safe eviction, and hit/miss/eviction counters logged at shutdown.
 - **Agentgateway (port 4000):** Optional HTTP proxy that can route to local or cloud models; **not required** for the RAG server to function.
 
 > **Note:** The RAG server makes outgoing HTTP calls to the LLM, embedding, and reranker services. It does **not** accept incoming HTTP requests. All MCP communication with Goose is via STDIO.
@@ -87,28 +87,40 @@ sudo xbps-install -S
 sudo xbps-install -y base-devel rust cargo sqlite-devel poppler-utils curl wget git
 
 # Download the specific vec0.so (v0.1.9+)
-# The binary probes ./extensions/vec0.{so,dylib,dll} in the CWD first, then
-# the system loader — so from the repo root, this is all you need:
-mkdir -p ./extensions
+# Since v2.4.2 the recommended home is resources/extensions/ — the binary
+# probes <resources>/extensions/vec0.{so,dylib,dll} first, where <resources>
+# is auto-resolved as $RAG_RESOURCES_DIR → <exe_dir>/resources →
+# <crate_root>/resources.
+mkdir -p ./resources/extensions
 cd /tmp
 curl -L -O https://github.com/asg017/sqlite-vec/releases/download/v0.1.9/sqlite-vec-0.1.9-loadable-linux-x86_64.tar.gz
 tar -xvf sqlite-vec-0.1.9-loadable-linux-x86_64.tar.gz
-mv vec0.so ~/.config/rag-server/extensions/    # or the repo's ./extensions/
+mv vec0.so ~/.config/rag-server/resources/extensions/   # canonical location
+
+# Legacy layout still works (probed after resources/):
+#   mkdir -p ./extensions && mv vec0.so ./extensions/vec0.so
+# Or skip copying altogether and use the explicit override:
+#   export RAG_VEC0_EXTENSION_PATH=/usr/local/lib/vec0.so
 ```
 
-If you prefer a system-wide install, `mv vec0.so` to a directory the dynamic loader searches (`/usr/local/lib`, etc.) and set `SQLITE_VEC_PATH=/usr/local/lib/vec0.so`. See [Configuration → Path resolution](#path-resolution).
+If you prefer a system-wide install, `mv vec0.so` to a directory the dynamic loader searches (`/usr/local/lib`, etc.) — the resolver falls back to a bare `"vec0"` sentinel that lets the system loader find it. See [Configuration → Path resolution](#path-resolution).
+
+> **`vec0.so` is gitignored.** A fresh `git clone` does **not** include it — the source tarball on GitHub does not include it either. Download it once as above, or set `RAG_VEC0_EXTENSION_PATH` to wherever you keep it. Since v2.4.3 the server refuses to start with a clear error if it can't find the extension.
 
 ### 2. Tokenizer Setup
 
-Download the BGE-M3 metadata required for exact tokenization.
+The BGE-M3 tokenizer is **tracked in the repo** at `resources/tokenizer.json` (since v2.4.2). A fresh `git clone` already includes it — no download step needed for source checkouts.
+
+If you need to fetch it manually (e.g. because you deleted the file, or you're installing from a source tarball that strips it):
 
 ```bash
-# Simplest — the repo probes ./tokenizer.json in the CWD first (since v2.4.1):
-wget https://huggingface.co/BAAI/bge-m3/resolve/main/tokenizer.json
-
-# Or install it into the config dir:
+# Recommended location — matches the binary's default probe:
 wget https://huggingface.co/BAAI/bge-m3/resolve/main/tokenizer.json \
-     -O ~/.config/rag-server/tokenizer.json
+     -O resources/tokenizer.json
+
+# Legacy override if you prefer a stable path:
+wget https://huggingface.co/BAAI/bge-m3/resolve/main/tokenizer.json \
+     -O ~/.config/rag-server/resources/tokenizer.json
 ```
 
 ### 3. Build the Binary
@@ -135,11 +147,29 @@ sqlite3 ~/.config/rag-server/vectors.db \
    SELECT rowid, id, collection, text FROM docs;"
 ```
 
-### 5. Upgrade Notes (v2.3.x → v2.4.1)
+### 5. Upgrade Notes (v2.4.2 → v2.4.3)
 
-See the full [Change Log](#-change-log). Three items worth acting on:
+v2.4.3 is a **documentation + fail-fast** update over v2.4.2. Existing databases open unchanged; existing env files keep working.
 
-- **`hybrid_search` had a silent correctness bug until v2.4.1.** It returned the _worst_ `k` candidates. If you've ever wondered why `--hybrid` gave qualitatively worse results than plain vector search, that was it. Re-run any important hybrid queries after upgrading.
+- **Startup fails fast on a missing `vec0`.** If the extension can't be located — via `RAG_VEC0_EXTENSION_PATH`, `SQLITE_VEC_PATH` (legacy alias), or the auto-resolved `resources/extensions/vec0.{so,dylib,dll}` — `rag-server-mcp` now refuses to start with one actionable error. Previously it emitted a `WARN` and then died inside `Db::new()` with SQLite's cryptic `…/vec0.so.so: cannot open shared object file`. That was the exact symptom of a stale env var pointing at a moved file. Now the error names the resolved path and the three remedies.
+- **v2.4.2 docs finally land.** The v2.4.2 tag shipped with the v2.4.1 README — the resource layout rewrite (`resources/tokenizer.json`, `resources/extensions/`), the `RAG_RESOURCES_DIR` and `RAG_VEC0_EXTENSION_PATH` env vars, the three-tier resolution, and the full v2.4.2 changelog entry were all missing from the tag. This release's README includes them.
+
+The v2.4.2 changes, documented in full below (they were missing from the v2.4.2 tag's README, hence their prominence here):
+
+- **Resource layout moved to `resources/`.** `tokenizer.json` now lives at `resources/tokenizer.json` and is tracked in git. The SQLite extension is re-homed to `resources/extensions/vec0.{so,dylib,dll}` and remains **gitignored**.
+- **Three-tier resource resolution.** `$RAG_RESOURCES_DIR` → `<exe_dir>/resources` → `<CARGO_MANIFEST_DIR>/resources`. Same binary works from `cargo run`, an installed location, and the container image without recompilation.
+- **New env vars.** `RAG_RESOURCES_DIR` (root override) and `RAG_VEC0_EXTENSION_PATH` (canonical name, platform-aware `.so` / `.dylib` / `.dll`). `SQLITE_VEC_PATH` remains as a legacy alias.
+- **Query cache hardening.** Race-safe eviction via `DashMap::remove_if`, insert-then-trim to avoid cap overshoot under concurrency, expired-first LRU sweep, hit/miss/eviction counters exposed via `stats()` and logged at shutdown.
+- **Auto-tracking version.** `serverInfo.version` in MCP `initialize` and the CLI's `--version` both read `env!("CARGO_PKG_VERSION")`. No more hardcoded strings drifting from `Cargo.toml`.
+- **`.gitignore` corrections.** The bare `env` file (no dot) is now correctly ignored. `vectors.db-*`, `perf.data*`, `*.profraw`, `.mcp.json`, `.direnv/` covered.
+- **`env.example` template.** A tracked template at the repo root replaces the "env file is in the repo" arrangement. The real `env` lives at `~/.config/rag-server/env` (untracked), `chmod 600`.
+- **Clippy clean.** `cargo clippy --all-targets -- -W clippy::pedantic` runs with **zero warnings** on `rustc 1.100.0`.
+
+### 6. Upgrade Notes (v2.3.x → v2.4.1)
+
+Three items worth acting on if you're upgrading from before v2.4.1:
+
+- **`hybrid_search` had a silent correctness bug until v2.4.1.** It returned the _worst_ `k` candidates. If `--hybrid` gave worse results than plain vector search, this was why. Re-run any important hybrid queries after upgrading.
 - **`ingest_directory` uses absolute paths as `doc_id`s since v2.4.0.** Files previously indexed by bare filename will re-appear under a new id on the next directory ingest. If you don't want duplicates, clear (or re-ingest) the affected collection.
 - **Fresh-start recommendation.** v2.4.0 changed the chunk-deletion strategy from `LIKE 'doc_id%'` to exact `parent_id` matching, and added stale-chunk cleanup on re-index. Existing DBs work fine, but `rm ~/.config/rag-server/vectors.db` followed by a re-ingest is the cleanest path if you're not sure what's in there.
 
@@ -147,14 +177,16 @@ See the full [Change Log](#-change-log). Three items worth acting on:
 
 ## ⚙️ Configuration
 
-The server defaults to optimized values for a 16 GB U-series workstation, overridable via environment variables.
+The server defaults to optimized values for a 16 GB U-series workstation, overridable via environment variables. A **tracked `env.example`** is provided at the repo root as a template — copy it to `~/.config/rag-server/env`, fill in only the values you need to override, `chmod 600`, and `source` it before launching the server.
 
 ### Runtime overrides (`~/.config/rag-server/env`)
 
-The compiled-in defaults below are typically overridden by a shell environment file sourced before launching the server:
+The compiled-in defaults are usually sufficient. Only override what you must:
 
 ```bash
-# ~/.config/rag-server/env
+# ~/.config/rag-server/env — only set what you actually need to override.
+# The template env.example at the repo root lists everything with defaults.
+
 export RAG_EMBED_MODEL="local-llama-server-embed"
 export RAG_RERANK_MODEL="local-llama-server-rerank"
 export RAG_RERANK_URL="http://127.0.0.1:11436/rerank"
@@ -163,50 +195,95 @@ export RAG_RERANK_MIN_CANDIDATES=3
 export RAG_MAX_CONCURRENT_FILES=4
 export RAG_MAX_CONCURRENT_REQUESTS=4
 
-# Observability (since v2.4.1). Logs go to stderr; stdout is the JSON-RPC wire.
+# Observability. Logs go to stderr; stdout is the JSON-RPC wire.
 # export RUST_LOG="rag_server_mcp=debug,info"
 
-# Optional: override default paths
-# export RAG_DB_PATH="$HOME/.config/rag-server/vectors.db"
-# export RAG_TOKENIZER_PATH="$HOME/.config/rag-server/tokenizer.json"
-# export SQLITE_VEC_PATH="$HOME/.config/rag-server/extensions/vec0.so"
+# Resource paths are auto-resolved since v2.4.2 — no env vars needed for a
+# standard source checkout at $CARGO_MANIFEST_DIR. Only override for custom
+# layouts (containers, packaged installs):
+# export RAG_RESOURCES_DIR="$HOME/.config/rag-server/resources"
+# export RAG_TOKENIZER_PATH="$RAG_RESOURCES_DIR/tokenizer.json"
+# export RAG_VEC0_EXTENSION_PATH="$RAG_RESOURCES_DIR/extensions/vec0.so"
 ```
 
 Source it in your shell profile or in the Goose launch wrapper (`_goose_session`). See the **Goose** section below.
 
+> **Note on legacy names.** `SQLITE_VEC_PATH` is still honoured as an alias for `RAG_VEC0_EXTENSION_PATH` (checked second), so pre-v2.4.2 env files continue to work unchanged. Since v2.4.2 the `resources/` layout means **most users do not need to set either** — the binary resolves `<crate_root>/resources/extensions/vec0.{so,dylib,dll}` automatically.
+
+### `env.example` (tracked template)
+
+A tracked `env.example` at the repo root documents every variable the server understands, with defaults commented out. Copy it rather than starting from a blank file:
+
+```bash
+cp env.example ~/.config/rag-server/env
+chmod 600 ~/.config/rag-server/env
+$EDITOR ~/.config/rag-server/env
+```
+
+The repo's `env.example` is deliberately not pre-populated with any local paths — that's what makes it safe to commit and share. The real `env` lives at `~/.config/rag-server/env` and is gitignored.
+
 ### Environment Variables Reference
 
-| Variable                      | Default Value                                                                  | Description                                                                                        |
-| ----------------------------- | ------------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------- |
-| `SQLITE_VEC_PATH`             | `./extensions/vec0.{so,dylib,dll}` (if present) → `vec0`                       | Path to the `sqlite-vec` extension. Probed locally first; bare `vec0` defers to the system loader. |
-| `RAG_DB_PATH`                 | `$XDG_CONFIG_HOME/rag-server/vectors.db`                                       | Path to the SQLite database (overridable since v2.4.0).                                            |
-| `RAG_TOKENIZER_PATH`          | `./tokenizer.json` (if present) → `$XDG_CONFIG_HOME/rag-server/tokenizer.json` | Path to the BGE-M3 `tokenizer.json`. Probed in the CWD first (since v2.4.1).                       |
-| `RAG_EMBED_URL`               | `http://localhost:11435/v1/embeddings`                                         | HTTP endpoint for embedding server.                                                                |
-| `RAG_EMBED_MODEL`             | `bge-m3`                                                                       | Model name sent to the embedder.                                                                   |
-| `RAG_RERANK_URL`              | `http://localhost:11436/rerank`                                                | HTTP endpoint for reranker server.                                                                 |
-| `RAG_RERANK_MODEL`            | `bge-reranker-v2-m3`                                                           | Model name sent to the reranker.                                                                   |
-| `RAG_EXPAND_URL`              | `http://localhost:4000/v1/chat/completions`                                    | OpenAI-compatible endpoint for query expansion (Agentgateway by default). **New in v2.4.1.**       |
-| `RAG_EXPAND_AUTH_TOKEN`       | _(unset → no `Authorization` header)_                                          | Bearer token for the expander endpoint. If unset, no auth header is sent. **New in v2.4.1.**       |
-| `RAG_TIMEOUT_SECS`            | `14400`                                                                        | HTTP request timeout for embed / rerank / expand calls. **New in v2.4.1** (was hardcoded).         |
-| `RAG_CHUNK_SIZE`              | `1024`                                                                         | Max tokens per segment. Must be > 0.                                                               |
-| `RAG_CHUNK_OVERLAP`           | `150`                                                                          | Token overlap for context. Warned if >= `RAG_CHUNK_SIZE`.                                          |
-| `RAG_BATCH_SIZE`              | `8`                                                                            | Embedding batch size for API requests. Must be > 0.                                                |
-| `RAG_RERANK_K`                | `15`                                                                           | Number of ANN candidates retrieved before reranking.                                               |
-| `RAG_RERANK_MIN_SCORE`        | `0.3`                                                                          | Minimum relevance score to keep.                                                                   |
-| `RAG_MAX_CONCURRENT_FILES`    | `4`                                                                            | Parallelism when ingesting directories.                                                            |
-| `RAG_MAX_CONCURRENT_REQUESTS` | _(unset → sequential)_                                                         | Max parallel HTTP requests for embeddings. Order is preserved under concurrency since v2.4.0.      |
-| `RAG_RERANK_MIN_CANDIDATES`   | _(unset → always rerank)_                                                      | Skip reranking if fewer candidates (adaptive).                                                     |
-| `RUST_LOG`                    | `rag_server_mcp=debug,info`                                                    | `tracing` filter. Set to `info`, `debug`, `trace`, or a per-target filter. **New in v2.4.1.**      |
+| Variable                      | Default Value                                                                                           | Description                                                                                                                 |
+| ----------------------------- | ------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------- |
+| `RAG_RESOURCES_DIR`           | `$RAG_RESOURCES_DIR` → `<exe_dir>/resources` → `<crate_root>/resources`                                 | Root of the bundled resources (`tokenizer.json`, `extensions/`). **New in v2.4.2.**                                         |
+| `RAG_VEC0_EXTENSION_PATH`     | `$RAG_RESOURCES_DIR/extensions/vec0.{so,dylib,dll}` → `./extensions/vec0.*` → `vec0` (system loader)    | Path to the `sqlite-vec` extension. **New in v2.4.2** — canonical name; platform-aware suffix.                              |
+| `SQLITE_VEC_PATH`             | _(legacy alias for `RAG_VEC0_EXTENSION_PATH`)_                                                          | Still honoured, checked second after `RAG_VEC0_EXTENSION_PATH`. Kept for backward compatibility.                            |
+| `RAG_TOKENIZER_PATH`          | `$RAG_RESOURCES_DIR/tokenizer.json` → `./tokenizer.json` → `$XDG_CONFIG_HOME/rag-server/tokenizer.json` | Path to the BGE-M3 `tokenizer.json`. Since v2.4.2 the `resources/` copy is tracked in git, so a fresh clone needs no setup. |
+| `RAG_DB_PATH`                 | `$XDG_CONFIG_HOME/rag-server/vectors.db`                                                                | Path to the SQLite database (overridable since v2.4.0).                                                                     |
+| `RAG_EMBED_URL`               | `http://localhost:11435/v1/embeddings`                                                                  | HTTP endpoint for embedding server.                                                                                         |
+| `RAG_EMBED_MODEL`             | `bge-m3`                                                                                                | Model name sent to the embedder.                                                                                            |
+| `RAG_RERANK_URL`              | `http://localhost:11436/rerank`                                                                         | HTTP endpoint for reranker server.                                                                                          |
+| `RAG_RERANK_MODEL`            | `bge-reranker-v2-m3`                                                                                    | Model name sent to the reranker.                                                                                            |
+| `RAG_EXPAND_URL`              | `http://localhost:4000/v1/chat/completions`                                                             | OpenAI-compatible endpoint for query expansion (Agentgateway by default). **New in v2.4.1.**                                |
+| `RAG_EXPAND_AUTH_TOKEN`       | _(unset → no `Authorization` header)_                                                                   | Bearer token for the expander endpoint. If unset, no auth header is sent. **New in v2.4.1.**                                |
+| `RAG_TIMEOUT_SECS`            | `14400`                                                                                                 | HTTP request timeout for embed / rerank / expand calls. **New in v2.4.1** (was hardcoded).                                  |
+| `RAG_CHUNK_SIZE`              | `1024`                                                                                                  | Max tokens per segment. Must be > 0.                                                                                        |
+| `RAG_CHUNK_OVERLAP`           | `150`                                                                                                   | Token overlap for context. Warned if >= `RAG_CHUNK_SIZE`.                                                                   |
+| `RAG_BATCH_SIZE`              | `8`                                                                                                     | Embedding batch size for API requests. Must be > 0.                                                                         |
+| `RAG_RERANK_K`                | `15`                                                                                                    | Number of ANN candidates retrieved before reranking.                                                                        |
+| `RAG_RERANK_MIN_SCORE`        | `0.3`                                                                                                   | Minimum relevance score to keep.                                                                                            |
+| `RAG_MAX_CONCURRENT_FILES`    | `4`                                                                                                     | Parallelism when ingesting directories.                                                                                     |
+| `RAG_MAX_CONCURRENT_REQUESTS` | _(unset → sequential)_                                                                                  | Max parallel HTTP requests for embeddings. Order is preserved under concurrency since v2.4.0.                               |
+| `RAG_RERANK_MIN_CANDIDATES`   | _(unset → always rerank)_                                                                               | Skip reranking if fewer candidates (adaptive).                                                                              |
+| `RUST_LOG`                    | `rag_server_mcp=debug,info`                                                                             | `tracing` filter. Set to `info`, `debug`, `trace`, or a per-target filter. **New in v2.4.1.**                               |
 
 > **Note:** `RAG_MAX_CONCURRENT_REQUESTS > 1` was unsafe before v2.4.0 (used `buffer_unordered`, embeddings could attach to the wrong chunks). Fixed with `buffered` — safe to raise to `4` or higher for faster ingestion.
 
 ### Path resolution
 
-Both `SQLITE_VEC_PATH` and `RAG_TOKENIZER_PATH` follow the same priority:
+**For a standard source checkout, you don't need to set anything.** Since v2.4.2 the binary finds `resources/tokenizer.json` and `resources/extensions/vec0.{so,dylib,dll}` by walking three well-known locations, all relative to where the binary actually lives — no CWD dependence, no env vars required. This is the change that closed the "works when I `cd` to the repo root first" bug from earlier releases.
 
-1. **Explicit env var** — highest priority, always wins if set and non-empty.
-2. **Repo-local file** in the CWD — `./extensions/vec0.*` and `./tokenizer.json`. This is what makes `git clone && cargo build --release` work with zero configuration.
-3. **Fallback** — for `SQLITE_VEC_PATH`, a bare `vec0` string is handed to the system loader (works when `sqlite-vec` is installed system-wide); for `RAG_TOKENIZER_PATH`, `$XDG_CONFIG_HOME/rag-server/tokenizer.json`.
+The full priority order is documented below for custom-layout cases (containers, packaged installs, third-party bundles).
+
+**Step 1 — locate `<resources>`:**
+
+1. `$RAG_RESOURCES_DIR` (explicit override).
+2. `<dir of current_exe>/resources` (installed binary, container).
+3. `<crate root>/resources` (dev build — `cargo run` or `cargo build` from a checkout).
+
+**Step 2 — locate each file inside `<resources>`:**
+
+**vec0.so** (`resolve_vec0_extension_path`):
+
+1. `$RAG_VEC0_EXTENSION_PATH` (new canonical).
+2. `$SQLITE_VEC_PATH` (legacy alias).
+3. `<resources>/extensions/vec0.{so,dylib,dll}` — platform-aware extension.
+4. `./extensions/vec0.{so,dylib,dll}` — legacy CWD probe, retained for back-compat.
+5. Bare `"vec0"` — hands the load to the system dynamic loader (works when `sqlite-vec` is installed system-wide).
+
+**tokenizer.json** (`resolve_tokenizer_path`):
+
+1. `$RAG_TOKENIZER_PATH` (explicit override).
+2. `<resources>/tokenizer.json` — tracked in git since v2.4.2; a fresh clone works with zero configuration.
+3. `./tokenizer.json` — legacy CWD probe.
+4. `$XDG_CONFIG_HOME/rag-server/tokenizer.json` — legacy install fallback.
+
+The resolved paths are logged at startup under `RUST_LOG=info` (`resolved resource paths: tokenizer_path=… vec0_extension_path=…`) so you can confirm exactly which file was loaded.
+
+Since v2.4.3 the server **refuses to start** if `vec0` can't be found, with a message naming the path it settled on. That's a deliberate change from the previous `WARN` + late failure inside `Db::new()`.
+
+The `Containerfile` wires this together by placing both assets at `/usr/local/share/rag-server/resources/` and setting `RAG_RESOURCES_DIR` to that directory — same code path as an installed binary, so no special casing.
 
 ---
 
@@ -214,17 +291,41 @@ Both `SQLITE_VEC_PATH` and `RAG_TOKENIZER_PATH` follow the same priority:
 
 ### Global Environment (`.zshenv`)
 
+Only `OPENAI_*` needs to be set — resource paths auto-resolve since v2.4.2.
+
 ```bash
 # ~/.zshenv
 export OPENAI_API_KEY="sk-unused"
 export OPENAI_BASE_URL="http://localhost:4000/v1"
 export OPENAI_TIMEOUT=7200
-export SQLITE_VEC_PATH="$HOME/.config/rag-server/extensions/vec0.so"
+
+# No vec0/tokenizer env var needed for a source checkout at
+# ~/.config/rag-server/. The binary resolves resources/ from the crate root.
+#
+# If you *want* to pin explicitly (e.g. for a custom install), use the
+# canonical name — not the legacy SQLITE_VEC_PATH:
+#   export RAG_VEC0_EXTENSION_PATH="$HOME/.config/rag-server/resources/extensions/vec0.so"
+#
+# For a container or a non-standard layout, the whole resources/ tree can
+# be relocated with one variable:
+#   export RAG_RESOURCES_DIR="/usr/local/share/rag-server/resources"
 ```
 
 ### Goose Configuration (`~/.config/goose/config.yaml`)
 
-Integrate the server as a **stdio** extension:
+Integrate the server as a **stdio** extension. Since v2.4.2 you can omit the `env:` block entirely — the child process resolves `resources/` from the crate root the same way the CLI does:
+
+```yaml
+extensions:
+  rag:
+    enabled: true
+    name: rag
+    type: stdio
+    cmd: $HOME/.config/rag-server/target/release/rag-server-mcp
+    timeout: 7200
+```
+
+If you run the binary from a location where `<exe_dir>/resources` and `<$CARGO_MANIFEST_DIR>/resources` both miss (container image at `/usr/local/bin`, packaged install, etc.), point Goose at the resources dir explicitly:
 
 ```yaml
 extensions:
@@ -234,11 +335,13 @@ extensions:
     type: stdio
     cmd: $HOME/.config/rag-server/target/release/rag-server-mcp
     env:
-      SQLITE_VEC_PATH: $HOME/.config/rag-server/extensions/vec0.so
+      RAG_RESOURCES_DIR: /usr/local/share/rag-server/resources
     timeout: 7200
 ```
 
-> The RAG server reads all `RAG_*` environment variables. These can be set in `~/.config/rag-server/env` and sourced in your session.
+`RAG_VEC0_EXTENSION_PATH` and `RAG_TOKENIZER_PATH` remain available for finer per-file overrides. The legacy `SQLITE_VEC_PATH` is still accepted, but new configs should use `RAG_RESOURCES_DIR` (one variable for the whole tree) instead of pinning individual files.
+
+> The RAG server reads all `RAG_*` environment variables. These can be set in `~/.config/rag-server/env` and sourced in your session — but the same "only override what you must" rule applies.
 
 ### Dual Reranker Sessions (Zsh aliases)
 
@@ -440,7 +543,7 @@ By utilizing **Quantization-Aware Training (QAT-UD)** and **N-Gram software spec
 - **800 % speedup:** Indexing 700 project chunks dropped from 45+ min (CPU) to ~5 min (iGPU).
 - **100 % speedup on repeated queries:** LRU query cache serves identical queries instantly.
 - **Linguistic precision:** Handles Swedish legal nuances and complex Rust traits without semantic drift.
-- **Zero leakage:** 100 % of data remains on local silicon.
+- **Zero leakage:** 100% of data remains on local silicon.
 - **Hybrid search recall:** BM25 + vector search significantly improves recall for both exact keywords and semantic concepts.
 
 ---
@@ -479,29 +582,42 @@ RUST_LOG=debug ./target/release/rag-server-mcp list-collections 2>&1 | head
 
 If you still see nothing, confirm you're on v2.4.1+ (pre-2.4.1 builds declared `tracing-subscriber` but never initialized it, so all `tracing` macros were no-ops). Also confirm you're reading **stderr**, not stdout — logs go to stderr on purpose, because stdout is the JSON-RPC wire.
 
+### Which resource paths did the binary actually load?
+
+Run with `RUST_LOG=info` and look for the startup line:
+
+```
+INFO resolved resource paths tokenizer_path=… vec0_extension_path=…
+```
+
+The paths are absolute and reflect the final resolution. If they point somewhere unexpected, see [Configuration → Path resolution](#path-resolution) for the full priority list. Override with `RAG_RESOURCES_DIR` to force a specific root.
+
+### `Error: vec0 extension not found at '<path>'`
+
+Since v2.4.3 the server fails at startup with this exact message when the `vec0` extension can't be located. The message includes the path the resolver settled on — check the three fixes in order:
+
+1. **File exists at that path?** If not, download it once (see [Installation §1](#1-prerequisites)) into `resources/extensions/`, or wherever the reported path expects it.
+2. **Stale env var?** `env | grep -i vec` — if `SQLITE_VEC_PATH` or `RAG_VEC0_EXTENSION_PATH` points at an old location, unset it. Since v2.4.2 a standard source checkout needs **no env var at all** — the resolver finds `<crate_root>/resources/extensions/vec0.{so,dylib,dll}` automatically.
+3. **Unusual layout?** Set `RAG_RESOURCES_DIR` to the directory containing `tokenizer.json` and `extensions/`, and the rest resolves relatively.
+
+Pre-v2.4.3 builds instead showed `…/vec0.so.so: cannot open shared object file` — that was SQLite's fallback suffix after the initial path missed, not a different bug. The new error replaces it.
+
+> **Note on stale shells.** Editing `.zshenv` to remove a `SQLITE_VEC_PATH` export does not unset it in shells that were already running. `exec zsh -l` inherits the parent's environment, so it carries the old value forward. Open a fresh terminal, or `unset SQLITE_VEC_PATH RAG_VEC0_EXTENSION_PATH` in the current one, then re-run.
+
 ### `hybrid_search` returns suspiciously bad results
 
 Fixed in v2.4.1. The old code sorted `combined_score` (a distance — lower = better) _descending_, so `truncate(k)` returned the _worst_ matches. Upgrade and re-run.
 
 ### `Tokenizer error: No such file or directory`
 
-The tokenizer wasn't found. Since v2.4.1 the resolution order is:
+The tokenizer wasn't found. Since v2.4.2 the resolution order is:
 
 1. `$RAG_TOKENIZER_PATH`
-2. `./tokenizer.json` (CWD)
-3. `$XDG_CONFIG_HOME/rag-server/tokenizer.json`
+2. `<resources>/tokenizer.json` (where `<resources>` = `$RAG_RESOURCES_DIR` → `<exe_dir>/resources` → `<crate_root>/resources`)
+3. `./tokenizer.json` (CWD, legacy)
+4. `$XDG_CONFIG_HOME/rag-server/tokenizer.json` (legacy install)
 
-Either `wget` the BGE-M3 `tokenizer.json` into one of those locations, or set `RAG_TOKENIZER_PATH` explicitly.
-
-### `cannot open shared library: vec0`
-
-Same story — the extension wasn't found. Resolution order:
-
-1. `$SQLITE_VEC_PATH`
-2. `./extensions/vec0.{so,dylib,dll}` (CWD)
-3. Bare `"vec0"` (system loader)
-
-The repo layout ships `./extensions/vec0.so`, so `cd` to the repo root before invoking the binary, or set `SQLITE_VEC_PATH`.
+The tokenizer ships tracked in `resources/tokenizer.json` — a fresh `git clone` should not need step 4. If the error persists, check `RUST_LOG=info` startup output to see which path was resolved, then either populate it or set `RAG_TOKENIZER_PATH` explicitly.
 
 ### `chunk_overlap >= chunk_size` warning
 
@@ -514,6 +630,31 @@ Hard fail by design — a 0 chunk size panics the chunker. Same for `RAG_BATCH_S
 ---
 
 ## 📝 Change Log
+
+### v2.4.3 (2026-11-16)
+
+**Fail-fast startup, and the v2.4.2 release notes finally land.**
+
+- **Missing `vec0` now fails at `Config::from_env()` with a clear message,** instead of emitting a `WARN` and then dying inside `Db::new()` with the cryptic `…/vec0.so.so: cannot open shared object file`. The old WARN said "vector search will fail if requested" — misleading, because `Db::new()` unconditionally creates the `vec0` virtual table, so _every_ command, including `list-collections`, failed. `validate()` now `bail!`s before any I/O, with a message pointing at the three remedies: download into `resources/extensions/`, install `sqlite-vec` system-wide, or set `RAG_VEC0_EXTENSION_PATH`.
+- **README corrected.** The v2.4.2 tag shipped with the v2.4.1 README — the resource-layout rewrite (`resources/tokenizer.json`, `resources/extensions/vec0.{so,dylib,dll}`), the `RAG_RESOURCES_DIR` / `RAG_VEC0_EXTENSION_PATH` env vars, the three-tier resolution, and the full v2.4.2 changelog entry were all missing from the release tag. Re-documented here so v2.4.3 has accurate notes.
+- **`Cargo.toml` version 2.4.2 → 2.4.3.** `serverInfo.version` and `--version` auto-track via `env!("CARGO_PKG_VERSION")` — no code change needed.
+
+### v2.4.2 (2026-11-15)
+
+**Resource layout, path resolution, cache hardening, and a clippy-clean build.**
+
+- **Resource layout moved to `resources/`.** `tokenizer.json` now lives at `resources/tokenizer.json` and is tracked in git — a fresh clone boots with no extra setup. The SQLite extension is re-homed to `resources/extensions/vec0.{so,dylib,dll}` and remains **gitignored** (platform-specific binary — downloaded or built in the `Containerfile`).
+- **Three-tier resource resolution.** `config.rs` gains a `resources_dir()` helper with the priority `$RAG_RESOURCES_DIR` → `<exe_dir>/resources` → `<CARGO_MANIFEST_DIR>/resources`. Same binary works from `cargo run` in a checkout, an installed location, and the container image without recompilation.
+- **New env vars.** `RAG_RESOURCES_DIR` (root override) and `RAG_VEC0_EXTENSION_PATH` (canonical name, platform-aware `.so` / `.dylib` / `.dll`). `SQLITE_VEC_PATH` remains as a legacy alias, checked second. `RAG_TOKENIZER_PATH` unchanged.
+- **`db.rs` delegate.** The old `resolve_vec_extension()` with its CWD-relative `"extensions/vec0.so"` literal is gone — it now calls `crate::config::resolve_vec0_extension_path()`. Fixes silent failures when the binary was invoked from anywhere other than the repo root.
+- **Query cache hardening (`cache.rs`).** Race-safe eviction via `DashMap::remove_if` (a concurrent `insert` of the same key can no longer be silently deleted by an eviction racing on the same key), insert-then-trim (two concurrent inserts can't both see `len == max_size` and both evict, overshooting the cap by one), expired-first LRU sweep (bulk-drop dead entries, only fall back to single-LRU eviction when nothing expired), and hit/miss/eviction counters exposed via `stats()` — logged at `info` on clean shutdown alongside `len` and `is_empty`.
+- **Auto-tracking version.** `serverInfo.version` in MCP `initialize` and the CLI's `--version` now read `env!("CARGO_PKG_VERSION")` instead of hardcoded strings. Both fields track `Cargo.toml` automatically; bumping one no longer risks silent drift.
+- **`#![allow(...)]` position fix.** The `main.rs` block was previously placed after the `mod` declarations, which meant the allows only applied to modules declared after that point. Moved to the top of the file.
+- **`format_push_string` fix.** The remaining three sites that did `msg.push_str(&format!(...))` (in `tools/add_documents.rs` and `tools/delete_documents.rs`) now use `write!(msg, ...)` — one allocation instead of two.
+- **Clippy clean.** `cargo clippy --all-targets -- -W clippy::pedantic -A clippy::module_name_repetitions` runs with **zero warnings** on `rustc 1.100.0`.
+- **`.gitignore` corrections.** The bare `env` file (no dot) is now correctly ignored (was previously only matched as `env/` directory form, so a file literally named `env` was silently tracked). Added `vectors.db-journal`, `perf.data*`, `*.profraw`, `*.profdata`, `.mcp.json`, `.direnv/`. `tokenizer.json` and `resources/tokenizer.json` are explicitly **not** ignored (tracked).
+- **`env.example` template.** A tracked template at the repo root replaces the previous "the `env` file is in the repo" arrangement. The real `env` lives at `~/.config/rag-server/env` (untracked), `chmod 600`.
+- **`Cargo.toml`** `rust-version` remains `1.100`. `[profile.dev.package."*"] opt-level = 2` added so `tokenizers` / `pdf-extract` / the TLS stack don't run at `-O0` during development. Trimmed `tokio` features (`process`, `io-std`, `parking_lot`, `test-util` no longer pulled in — none used).
 
 ### v2.4.1 (2026-11-12)
 
@@ -589,9 +730,12 @@ The project is continuously built, tested, and published via GitHub Actions.
 
 | Stage            | Description                                                                                                                     |
 | ---------------- | ------------------------------------------------------------------------------------------------------------------------------- |
+| **Lint**         | `cargo fmt --all --check`, `cargo clippy --all-targets -- -W clippy::pedantic -A clippy::module_name_repetitions`.              |
 | **Build & Push** | Multi-stage `Containerfile` based on **Debian Bookworm** (OpenSSL 3). Builds the Rust binary in a container and pushes to GHCR. |
 | **Smoke Tests**  | Runs basic CLI commands (`--help`, `query --help`, etc.) to verify the image works.                                             |
 | **Cleanup**      | Weekly (Sundays 03:00) cleanup of old images — keeps the 5 latest versions, deletes untagged images.                            |
+
+> **Container image resources.** The `Containerfile` must copy `resources/tokenizer.json` into the image and build or download `vec0.so` into `resources/extensions/`, then set `RAG_RESOURCES_DIR=/usr/local/share/rag-server/resources`. Without this the image would start but fail at the first vector query — the source tarball on GitHub does **not** include `vec0.so` (it's gitignored). Since v2.4.3 the container fails at startup with a clear "vec0 extension not found" error rather than silently succeeding until the first `query`.
 
 ### Multi-architecture support
 
@@ -610,7 +754,7 @@ Docker automatically selects the correct architecture when you pull the image.
 | -------------- | ------------------------------------------------------------- |
 | `latest`       | Most recent build from the `main` branch.                     |
 | `<commit-sha>` | Exact commit hash for pinpoint rollbacks.                     |
-| `vX.Y.Z`       | Semantic version extracted from `Cargo.toml` (e.g. `v2.4.1`). |
+| `vX.Y.Z`       | Semantic version extracted from `Cargo.toml` (e.g. `v2.4.3`). |
 
 ### Container registry
 
@@ -625,7 +769,7 @@ Docker automatically selects the correct architecture when you pull the image.
 docker pull ghcr.io/bengtfrost/rag-server:latest
 
 # Pull a specific version
-docker pull ghcr.io/bengtfrost/rag-server:v2.4.1
+docker pull ghcr.io/bengtfrost/rag-server:v2.4.3
 
 # Run the binary
 docker run --rm ghcr.io/bengtfrost/rag-server:latest --help
