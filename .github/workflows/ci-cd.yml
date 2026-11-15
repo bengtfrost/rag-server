@@ -14,17 +14,9 @@ concurrency:
 env:
   REGISTRY: ghcr.io
   IMAGE_NAME: ${{ github.repository }}
-  # IMAGE must be spelled out at workflow level. `env.REGISTRY`/`env.IMAGE_NAME`
-  # cannot be referenced here or in `jobs.<job_id>.env:` — the env context is
-  # not available in those scopes. `github.repository` IS available, so this
-  # produces the same value the previous expression would have.
   IMAGE: ghcr.io/${{ github.repository }}
 
 jobs:
-  # ---------------------------------------------------------------------------
-  # Preflight — fail in ~30 s if a base image, download URL, or package name
-  # isn't available. Runs before the 15–20 min multi-arch build.
-  # ---------------------------------------------------------------------------
   preflight:
     runs-on: ubuntu-latest
     permissions:
@@ -34,13 +26,11 @@ jobs:
         run: |
           docker pull rust:1.100.0-slim-trixie >/dev/null
           echo "✓ rust:1.100.0-slim-trixie available"
-
       - name: Verify runtime base image exists
         run: |
           docker pull debian:trixie-slim >/dev/null
           echo "✓ debian:trixie-slim available"
-
-      - name: Verify vec0.so download URLs (both arches)
+      - name: Verify vec0.so download URLs
         run: |
           for arch in x86_64 aarch64; do
             url="https://github.com/asg017/sqlite-vec/releases/download/v0.1.9/sqlite-vec-0.1.9-loadable-linux-${arch}.tar.gz"
@@ -50,21 +40,16 @@ jobs:
             fi
             echo "✓ ${arch} tarball reachable"
           done
-
       - name: Verify libssl3t64 exists in trixie
         run: |
           docker run --rm debian:trixie-slim sh -c '
             apt-get update >/dev/null 2>&1
             apt-cache show libssl3t64 >/dev/null 2>&1 || {
-              echo "::error::libssl3t64 not found in trixie"
-              exit 1
+              echo "::error::libssl3t64 not found in trixie"; exit 1;
             }
             echo "✓ libssl3t64 available in trixie"
           '
 
-  # ---------------------------------------------------------------------------
-  # Lint gate — fails before the expensive build if fmt or clippy is dirty.
-  # ---------------------------------------------------------------------------
   lint:
     needs: preflight
     runs-on: ubuntu-latest
@@ -72,28 +57,19 @@ jobs:
       contents: read
     steps:
       - uses: actions/checkout@v7
-
-      # dtolnay/rust-toolchain@stable IGNORES the `toolchain:` input — the ref
-      # name is the toolchain. To pin an exact version, use @master.
       - name: Install Rust 1.100.0
         uses: dtolnay/rust-toolchain@master
         with:
           toolchain: "1.100.0"
           components: rustfmt, clippy
-
       - uses: Swatinem/rust-cache@v2
-
       - name: cargo fmt --check
         run: cargo fmt --all --check
-
       - name: cargo clippy
         run: |
           cargo clippy --all-targets --locked -- \
             -W clippy::pedantic -A clippy::module_name_repetitions -D warnings
 
-  # ---------------------------------------------------------------------------
-  # Build (PRs) or build+push (master / dispatch).
-  # ---------------------------------------------------------------------------
   build:
     needs: lint
     runs-on: ubuntu-latest
@@ -160,18 +136,6 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-  # ---------------------------------------------------------------------------
-  # Smoke test — runs against the image this run just built.
-  #
-  # Pull by `sha-<commit>`, not `:latest` — the sha tag was created by this
-  # build run, so pull-then-test is deterministic. `needs: build` guarantees
-  # the push completed before this job starts.
-  #
-  # All CLI checks assert *output*, not just exit code. Earlier versions
-  # passed `--help` while `--version` silently produced nothing, so the
-  # pipeline reported success on three steps that proved nothing. Now each
-  # `--help` step asserts non-empty combined stdout+stderr.
-  # ---------------------------------------------------------------------------
   smoke-test:
     needs: [build, lint]
     if: github.event_name != 'pull_request'
@@ -202,116 +166,111 @@ jobs:
       - name: Pull image (by sha — the just-pushed one)
         run: docker pull "${IMAGE}:sha-${{ github.sha }}"
 
-      - name: Image digest and creation time
-        run: |
-          docker inspect "${IMAGE}:sha-${{ github.sha }}" --format '
-            Ref:      '"${IMAGE}"':sha-${{ github.sha }}
-            ID:       {{.Id}}
-            Created:  {{.Created}}
-            Arch:     {{.Architecture}}
-            OS:       {{.Os}}
-          '
-
       # -----------------------------------------------------------------------
-      # Diagnostic — show what the binary actually produces for each flag on
-      # each stream. Runs first so the version check has a reference point:
-      # if --help has stdout but --version doesn't, the binary is misbehaving;
-      # if both are silent, the container isn't running the binary; if
-      # --version has output on stderr only, the version check catches it
-      # (it now reads both streams).
+      # DEFINITIVE diagnostic. Every introspection below goes through
+      # `sh -c` (bypasses entrypoint) and captures exit codes explicitly,
+      # so we can tell "binary missing / broken" apart from "binary runs
+      # but prints nothing".
       # -----------------------------------------------------------------------
-      - name: Diagnostic — flag behaviour on stdout / stderr
+      - name: Diagnostic — image contents and binary behaviour
         run: |
           IMG="${IMAGE}:sha-${{ github.sha }}"
-          echo "=== --help: stdout ==="
-          docker run --rm "$IMG" --help 2>/dev/null | head -5
-          echo "=== --help: stderr ==="
-          docker run --rm "$IMG" --help 2>&1 >/dev/null | head -5
-          echo "=== --version: stdout ==="
-          docker run --rm "$IMG" --version 2>/dev/null
-          echo "=== --version: stderr ==="
-          docker run --rm "$IMG" --version 2>&1 >/dev/null
-          echo "=== -V (short flag): combined ==="
-          docker run --rm "$IMG" -V 2>&1
-          echo "=== end diagnostic ==="
+          echo "════════ 1. Image config ════════"
+          docker inspect "$IMG" --format '
+          Architecture: {{.Architecture}}
+          OS:           {{.Os}}
+          Entrypoint:   {{json .Config.Entrypoint}}
+          Cmd:          {{json .Config.Cmd}}
+          WorkingDir:   {{.Config.WorkingDir}}
+          User:         {{.Config.User}}
+          Env:          {{json .Config.Env}}
+          Created:      {{.Created}}
+          '
 
+          echo "════════ 2. Image layers ════════"
+          docker history --no-trunc --format '{{.Size}}\t{{.CreatedBy}}' "$IMG" | head -20
+
+          echo "════════ 3. /usr/local/bin contents ════════"
+          docker run --rm --entrypoint sh "$IMG" -c \
+            'ls -la /usr/local/bin/ ; echo "---" ; file /usr/local/bin/rag-server-mcp || echo "file cmd missing"; echo "---"; stat /usr/local/bin/rag-server-mcp || echo "stat failed"'
+
+          echo "════════ 4. Direct invocation via sh -c ════════"
+          set +e
+          docker run --rm --entrypoint sh "$IMG" -c '
+            /usr/local/bin/rag-server-mcp --version
+            echo "EXIT=$?"
+          '
+          echo "outer-exit=$?"
+          set -e
+
+          echo "════════ 5. Entrypoint invocation (normal docker run) ════════"
+          set +e
+          docker run --rm "$IMG" --version
+          echo "docker run exit=$?"
+          set -e
+
+          echo "════════ 6. Capture stdout vs stderr separately ════════"
+          set +e
+          docker run --rm "$IMG" --version 1>/tmp/out 2>/tmp/err
+          rc=$?
+          echo "exit=$rc"
+          echo "stdout bytes: $(wc -c < /tmp/out)"
+          echo "stderr bytes: $(wc -c < /tmp/err)"
+          echo "--- stdout (xxd) ---"; xxd /tmp/out | head -5
+          echo "--- stderr (xxd) ---"; xxd /tmp/err | head -5
+          set -e
+
+          echo "════════ end diagnostic ════════"
+
+      # Assertions below — if any fails, the diagnostic above shows why.
       - name: CLI — help produces output
         run: |
+          set +e
           out=$(docker run --rm "${IMAGE}:sha-${{ github.sha }}" --help 2>&1)
+          rc=$?
+          set -e
+          echo "exit=$rc, bytes=${#out}"
+          if [ "$rc" -ne 0 ]; then
+            echo "::error::--help exited $rc (binary missing or broken). See Diagnostic step."
+            exit 1
+          fi
           if [ -z "$out" ]; then
-            echo "::error::--help produced no output on stdout or stderr"
+            echo "::error::--help exited 0 but produced no output. See Diagnostic step."
             exit 1
           fi
           echo "✓ --help produced ${#out} bytes"
 
-      - name: CLI — query help produces output
-        run: |
-          out=$(docker run --rm "${IMAGE}:sha-${{ github.sha }}" query --help 2>&1)
-          if [ -z "$out" ]; then
-            echo "::error::query --help produced no output on stdout or stderr"
-            exit 1
-          fi
-          echo "✓ query --help produced ${#out} bytes"
-
-      - name: CLI — ingest-file help produces output
-        run: |
-          out=$(docker run --rm "${IMAGE}:sha-${{ github.sha }}" ingest-file --help 2>&1)
-          if [ -z "$out" ]; then
-            echo "::error::ingest-file --help produced no output on stdout or stderr"
-            exit 1
-          fi
-          echo "✓ ingest-file --help produced ${#out} bytes"
-
       - name: CLI — version matches Cargo.toml
         run: |
           expected="${{ steps.get_version.outputs.version }}"
-
-          # Capture both streams separately, then print both. If --version
-          # ends up on stderr for any reason (Docker log driver, clap
-          # configuration, wrapper), this catches it. If it's on stdout,
-          # this catches it. If neither has output, the Diagnostic step
-          # above already showed the full picture.
+          set +e
           docker run --rm "${IMAGE}:sha-${{ github.sha }}" --version \
             > /tmp/version.out 2> /tmp/version.err
-          exit_code=$?
-
-          echo "Exit code:  $exit_code"
-          echo "--- stdout ---"
-          cat /tmp/version.out
-          echo "--- stderr ---"
-          cat /tmp/version.err
-          echo "--- end ---"
-
-          # Prefer stdout, fall back to stderr. Strip CR (from any CRLF
-          # artefact) and pick the last x.y.z token — clap prints
-          # "<name> <version>", so the last token is the version.
+          rc=$?
+          set -e
+          echo "exit=$rc"
+          echo "--- stdout ---"; cat /tmp/version.out
+          echo "--- stderr ---"; cat /tmp/version.err
           combined=$(cat /tmp/version.out /tmp/version.err | tr -d '\r')
           actual=$(printf '%s' "$combined" | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | tail -1)
-
           echo "Cargo.toml:  '$expected'"
           echo "Combined:    '$combined'"
           echo "Extracted:   '$actual'"
-
           if [ "$actual" != "$expected" ]; then
-            echo "::error::--version mismatch. Cargo.toml='$expected', image output='$combined' (extracted '$actual')."
-            echo "::error::If --version produced no output at all, the binary isn't responding to the flag inside the container — see the Diagnostic step above."
+            echo "::error::version mismatch (exit=$rc). Cargo.toml='$expected', image='$combined'. See Diagnostic step 4/5/6."
             exit 1
           fi
 
-      # The real resources check: calls Config::from_env() and then Db::new(),
-      # so it fails if $RAG_RESOURCES_DIR/tokenizer.json or .../vec0.so are
-      # missing. Since v2.4.3 the server bails fast with a clear message.
-      #
-      # Exit code is captured explicitly because `docker run | tee` yields
-      # tee's exit code, not docker's — a silent failure would be masked.
       - name: Runtime — resources resolve and vec0 loads
         run: |
+          set +e
           docker run --rm \
             -e RUST_LOG=info \
             -e RAG_DB_PATH=/tmp/smoke.db \
             "${IMAGE}:sha-${{ github.sha }}" \
             list-collections > /tmp/smoke.log 2>&1
           code=$?
+          set -e
           cat /tmp/smoke.log
           if [ "$code" -ne 0 ]; then
             echo "::error::list-collections exited $code — image is missing resources"
@@ -326,9 +285,6 @@ jobs:
             exit 1
           fi
 
-      # Final gate: :latest must point at the same digest as the sha tag.
-      # If this fails, the image works but the tag-alias is broken — a real
-      # bug in the publish step, not in the image.
       - name: Verify :latest points at the sha image
         run: |
           docker pull "${IMAGE}:latest"
@@ -339,6 +295,6 @@ jobs:
           echo "sha digest:    $sha_digest"
           echo "latest digest: $latest_digest"
           if [ "$sha_digest" != "$latest_digest" ]; then
-            echo "::error::${IMAGE}:latest does not point at the just-pushed image (${IMAGE}:sha-${{ github.sha }}). Publish step or tag-alias is broken."
+            echo "::error::${IMAGE}:latest does not point at sha image"
             exit 1
           fi

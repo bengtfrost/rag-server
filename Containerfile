@@ -3,9 +3,6 @@
 # =============================================================================
 # Stage 1: Builder — compile the Rust binary for the target architecture
 # =============================================================================
-# Fallbacks if this tag ever 404s:
-#   rust:1.100-slim-trixie
-#   rust:1.99-slim-trixie
 FROM rust:1.100.0-slim-trixie AS builder
 
 # Build dependencies:
@@ -25,26 +22,51 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 WORKDIR /app
 
-# Cache dependencies: build a dummy binary first so the dependency graph is
-# compiled and cached in a layer that only invalidates when Cargo.{toml,lock}
-# change. The real `cargo build` below recompiles only the local crate.
+# -----------------------------------------------------------------------------
+# Dependency cache layer
+# -----------------------------------------------------------------------------
+# Compile a dummy binary first so the dependency graph is built and cached
+# in a layer that only invalidates when Cargo.{toml,lock} change.
 COPY Cargo.toml Cargo.lock ./
 RUN mkdir -p src \
     && echo 'fn main() {}' > src/main.rs \
-    && cargo build --release --locked \
-    && rm -rf src
+    && cargo build --release --locked
 
 # Real source. .dockerignore keeps target/, .git/, env, and *.db out of the
 # build context, so this layer is small.
 COPY . .
 
-# Build the actual binary.
-RUN cargo build --release --locked \
-    && cp target/release/rag-server-mcp /usr/local/bin/rag-server-mcp
+# -----------------------------------------------------------------------------
+# Real build — CRITICAL: cargo clean -p first
+# -----------------------------------------------------------------------------
+# Do NOT just run `cargo build` here. The `COPY . .` above preserves the
+# source files' mtimes from actions/checkout (~T+0s). The dummy binary
+# built in the previous layer has an mtime from a few minutes into the
+# build (~T+11min). Cargo's freshness check sees the source as *older*
+# than the binary and skips rebuild — this layer would `cp
+# target/release/rag-server-mcp` and ship the dummy `fn main() {}`
+# binary, which silently ignores `--help` and `--version` (exit 0, no
+# output).
+#
+# `cargo clean -p rag-server-mcp` removes only the local crate's binary
+# and fingerprint, leaving the dependency cache (`target/release/deps/`,
+# `target/release/build/`) intact. The subsequent `cargo build` recompiles
+# just the local crate: ~30s native, ~2min under QEMU for arm64.
+#
+# Regression guard: if the binary at target/release/rag-server-mcp is
+# suspiciously small (~300 KB), the fix didn't apply and the dummy
+# shipped. The real binary with all deps linked is ~8–10 MB.
+RUN cargo clean -p rag-server-mcp \
+    && cargo build --release --locked \
+    && cp target/release/rag-server-mcp /usr/local/bin/rag-server-mcp \
+    && ls -lh /usr/local/bin/rag-server-mcp
 
-# Download the sqlite-vec loadable extension for the *target* architecture.
+# -----------------------------------------------------------------------------
+# Download sqlite-vec loadable extension for the target architecture
+# -----------------------------------------------------------------------------
 # TARGETARCH is injected by BuildKit (amd64 / arm64) and maps to the release
-# asset names x86_64 / aarch64.
+# asset names x86_64 / aarch64. The archive layout isn't guaranteed —
+# `find` locates vec0.so wherever it landed.
 ARG TARGETARCH
 RUN set -eux; \
     case "${TARGETARCH}" in \
@@ -56,7 +78,6 @@ RUN set -eux; \
         "https://github.com/asg017/sqlite-vec/releases/download/v0.1.9/sqlite-vec-0.1.9-loadable-linux-${vec_arch}.tar.gz"; \
     mkdir -p /tmp/vec0 /out/resources/extensions; \
     tar -xzf /tmp/vec0.tar.gz -C /tmp/vec0; \
-    # Archive layout isn't guaranteed — locate vec0.so wherever it landed.
     find /tmp/vec0 -name vec0.so -exec cp {} /out/resources/extensions/vec0.so \;; \
     test -f /out/resources/extensions/vec0.so; \
     rm -rf /tmp/vec0 /tmp/vec0.tar.gz; \
@@ -65,8 +86,6 @@ RUN set -eux; \
 # =============================================================================
 # Stage 2: Runtime — minimal Debian Trixie image
 # =============================================================================
-# Trixie is current stable (Bookworm is oldstable since 2025-08).
-# OpenSSL runtime package is libssl3t64 after the t64 transition.
 FROM debian:trixie-slim AS runtime
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -75,15 +94,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 # Non-root user via `useradd` (from `passwd`, Priority: required — always
-# present). `adduser` is NOT in debian:trixie-slim: Debian dropped it from the
-# slim base in the Bookworm→Trixie transition. Installing it just for this
-# line adds a package; `useradd` is what other trixie-slim fixes converged on.
-#
-# Flags mirror `adduser --disabled-password --gecos ""`:
-#   --create-home     → creates /home/raguser (needed for the default DB path)
-#   --shell ...nologin → no interactive login (equivalent to disabled password)
-#   --comment ""      → empty GECOS field
-#   no -p             → password field set to "!" in /etc/shadow (locked)
+# present). `adduser` is NOT in debian:trixie-slim: Debian dropped it from
+# the slim base in the Bookworm→Trixie transition.
 RUN useradd --create-home --home-dir /home/raguser \
         --shell /usr/sbin/nologin --comment "" raguser
 
