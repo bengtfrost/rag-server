@@ -180,8 +180,7 @@ impl Db {
         }
         let ph = ids.iter().map(|_| "?").collect::<Vec<_>>().join(",");
         let sql = format!(
-            "SELECT DISTINCT parent_id FROM docs WHERE collection = ? AND parent_id IN ({})",
-            ph
+            "SELECT DISTINCT parent_id FROM docs WHERE collection = ? AND parent_id IN ({ph})"
         );
         let mut stmt = self.conn.prepare(&sql)?;
         let mut params_vec: Vec<&dyn rusqlite::ToSql> = Vec::with_capacity(ids.len() + 1);
@@ -254,7 +253,7 @@ impl Db {
         delete_doc_chunks(conn, collection, parent_id)?;
 
         for (i, (text, emb)) in chunks.iter().zip(embs.iter()).enumerate() {
-            let chunk_id = format!("{}_ch{}", parent_id, i);
+            let chunk_id = format!("{parent_id}_ch{i}");
             let emb_json = serde_json::to_string(emb)?;
             conn.execute(
                 "INSERT INTO docs (id, collection, text, parent_id, chunk_index) \
@@ -274,10 +273,7 @@ impl Db {
             return Ok(Vec::new());
         }
         let placeholders = chunk_ids.iter().map(|_| "?").collect::<Vec<_>>().join(",");
-        let query = format!(
-            "SELECT id, text, parent_id FROM docs WHERE id IN ({})",
-            placeholders
-        );
+        let query = format!("SELECT id, text, parent_id FROM docs WHERE id IN ({placeholders})");
         let mut stmt = self.conn.prepare(&query)?;
         let rows = stmt.query_map(rusqlite::params_from_iter(chunk_ids.iter()), |row| {
             Ok((row.get(0)?, row.get(1)?, row.get(2)?))
@@ -370,7 +366,7 @@ impl Db {
         // `to_similarity` flips both into [0, 1] with 1 = best.
         let vector_raw: Vec<(String, f64)> = vector_results
             .iter()
-            .map(|(id, _, distance)| (id.clone(), *distance as f64))
+            .map(|(id, _, distance)| (id.clone(), f64::from(*distance)))
             .collect();
         let vector_sim = to_similarity(&vector_raw);
         let bm25_sim = to_similarity(&bm25_results);
@@ -446,27 +442,14 @@ fn to_similarity(scores: &[(String, f64)]) -> Vec<(String, f64)> {
 
 /// Resolve the sqlite-vec extension path.
 ///
-/// Order of preference:
-/// 1. `$SQLITE_VEC_PATH` (explicit override).
-/// 2. The bundled extension under `./extensions/`, so a fresh clone works
-///    with zero environment variables.
-/// 3. A bare `"vec0"`, which lets the system dynamic loader find a
-///    system-installed extension.
+/// Delegates to [`crate::config::resolve_vec0_extension_path`], which
+/// honours `RAG_VEC0_EXTENSION_PATH` / `SQLITE_VEC_PATH`, then searches
+/// `<resources>/extensions/` (new layout) and `./extensions/` (legacy
+/// checkout), and finally falls back to the `"vec0"` system-loader
+/// sentinel. Kept as a local alias so this module's call sites do not
+/// need to know about `Config`.
 fn resolve_vec_extension() -> String {
-    if let Ok(path) = std::env::var("SQLITE_VEC_PATH") {
-        return path;
-    }
-    let candidates = [
-        "extensions/vec0.so",
-        "extensions/vec0.dylib",
-        "extensions/vec0.dll",
-    ];
-    for candidate in candidates {
-        if std::path::Path::new(candidate).is_file() {
-            return candidate.to_string();
-        }
-    }
-    "vec0".to_string()
+    crate::config::resolve_vec0_extension_path()
 }
 
 /// Delete every chunk belonging to `doc_id` in `collection`.
@@ -482,7 +465,7 @@ fn delete_doc_chunks(conn: &rusqlite::Connection, collection: &str, doc_id: &str
     };
     if !old_ids.is_empty() {
         let ph = old_ids.iter().map(|_| "?").collect::<Vec<_>>().join(",");
-        let sql = format!("DELETE FROM vectors WHERE id IN ({})", ph);
+        let sql = format!("DELETE FROM vectors WHERE id IN ({ph})");
         let param_refs: Vec<&dyn rusqlite::ToSql> =
             old_ids.iter().map(|s| s as &dyn rusqlite::ToSql).collect();
         conn.execute(&sql, rusqlite::params_from_iter(param_refs))?;

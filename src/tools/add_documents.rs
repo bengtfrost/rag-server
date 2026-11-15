@@ -1,5 +1,6 @@
 use clap::Args;
 use serde::Deserialize;
+use std::fmt::Write as _;
 use std::sync::Arc;
 use std::time::Instant;
 use tokio::sync::Mutex;
@@ -69,10 +70,7 @@ pub async fn add_documents(
     if to_insert.is_empty() {
         let mut msg = format!("No new documents to index in '{}'.", args.collection);
         if !skipped.is_empty() {
-            msg.push_str(&format!(
-                "\nSkipped (already indexed): {}",
-                skipped.join(", ")
-            ));
+            let _ = write!(msg, "\nSkipped (already indexed): {}", skipped.join(", "));
         }
         return Ok(msg);
     }
@@ -116,10 +114,11 @@ pub async fn add_documents(
         format_duration(elapsed)
     );
     if !skipped.is_empty() {
-        msg.push_str(&format!(
+        let _ = write!(
+            msg,
             "\nWarning: Already indexed (skipped): {}",
             skipped.join(", ")
-        ));
+        );
     }
     Ok(msg)
 }
@@ -127,7 +126,7 @@ pub async fn add_documents(
 fn format_duration(d: std::time::Duration) -> String {
     let secs = d.as_secs();
     if secs < 60 {
-        format!("{}s", secs)
+        format!("{secs}s")
     } else {
         format!("{}m {}s", secs / 60, secs % 60)
     }

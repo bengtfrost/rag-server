@@ -40,7 +40,7 @@ pub async fn ingest_file(
 ) -> anyhow::Result<String> {
     let file_path = &args.file_path;
     if !std::path::Path::new(file_path).is_file() {
-        return Err(anyhow::anyhow!("File not found: {}", file_path));
+        return Err(anyhow::anyhow!("File not found: {file_path}"));
     }
 
     let doc_id = args.document_id.clone().unwrap_or_else(|| {
@@ -111,7 +111,7 @@ pub async fn ingest_file(
 fn format_duration(d: std::time::Duration) -> String {
     let secs = d.as_secs();
     if secs < 60 {
-        format!("{}s", secs)
+        format!("{secs}s")
     } else {
         format!("{}m {}s", secs / 60, secs % 60)
     }

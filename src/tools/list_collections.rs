@@ -11,7 +11,7 @@ pub async fn list_collections(db: &Arc<Mutex<Db>>) -> anyhow::Result<String> {
     }
     let lines: Vec<String> = collections
         .iter()
-        .map(|(name, count)| format!("• {}: {} documents", name, count))
+        .map(|(name, count)| format!("• {name}: {count} documents"))
         .collect();
     Ok(format!("Database collections:\n{}", lines.join("\n")))
 }

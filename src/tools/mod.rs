@@ -152,46 +152,45 @@ pub async fn call_tool(
         "create_collection" => {
             let args: create_collection::CreateCollectionArgs = serde_json::from_value(args)
                 .map_err(|e| anyhow::anyhow!(
-                    "Invalid arguments for 'create_collection'. Expected {{ name: string }}. Error: {}", e))?;
+                    "Invalid arguments for 'create_collection'. Expected {{ name: string }}. Error: {e}"))?;
             create_collection::create_collection(db, args).await
         }
         "ingest_file" => {
-            let args: ingest_file::IngestFileArgs = serde_json::from_value(args).map_err(|e| {
-                anyhow::anyhow!("Invalid arguments for 'ingest_file'. Error: {}", e)
-            })?;
+            let args: ingest_file::IngestFileArgs = serde_json::from_value(args)
+                .map_err(|e| anyhow::anyhow!("Invalid arguments for 'ingest_file'. Error: {e}"))?;
             ingest_file::ingest_file(db, cfg, client, args).await
         }
         "ingest_directory" => {
             let args: ingest_directory::IngestDirectoryArgs = serde_json::from_value(args)
                 .map_err(|e| {
-                    anyhow::anyhow!("Invalid arguments for 'ingest_directory'. Error: {}", e)
+                    anyhow::anyhow!("Invalid arguments for 'ingest_directory'. Error: {e}")
                 })?;
             ingest_directory::ingest_directory(db, cfg, client, args).await
         }
         "add_documents" => {
             let args: add_documents::AddDocumentsArgs =
                 serde_json::from_value(args).map_err(|e| {
-                    anyhow::anyhow!("Invalid arguments for 'add_documents'. Error: {}", e)
+                    anyhow::anyhow!("Invalid arguments for 'add_documents'. Error: {e}")
                 })?;
             add_documents::add_documents(db, cfg, client, args).await
         }
         "query" => {
             let args: query::QueryArgs = serde_json::from_value(args)
-                .map_err(|e| anyhow::anyhow!("Invalid arguments for 'query'. Error: {}", e))?;
+                .map_err(|e| anyhow::anyhow!("Invalid arguments for 'query'. Error: {e}"))?;
             query::query(db, cfg, client, args).await
         }
         "list_collections" => list_collections::list_collections(db).await,
         "delete_documents" => {
             let args: delete_documents::DeleteDocumentsArgs = serde_json::from_value(args)
                 .map_err(|e| {
-                    anyhow::anyhow!("Invalid arguments for 'delete_documents'. Error: {}", e)
+                    anyhow::anyhow!("Invalid arguments for 'delete_documents'. Error: {e}")
                 })?;
             delete_documents::delete_documents(db, args).await
         }
         "delete_collection" => {
             let args: delete_collection::DeleteCollectionArgs = serde_json::from_value(args)
                 .map_err(|e| {
-                    anyhow::anyhow!("Invalid arguments for 'delete_collection'. Error: {}", e)
+                    anyhow::anyhow!("Invalid arguments for 'delete_collection'. Error: {e}")
                 })?;
             delete_collection::delete_collection(db, args).await
         }
@@ -199,6 +198,6 @@ pub async fn call_tool(
             crate::cache::QUERY_CACHE.clear();
             Ok("✓ Cache cleared. All cached queries have been removed.".to_string())
         }
-        _ => Err(anyhow::anyhow!("Unknown tool: {}", name)),
+        _ => Err(anyhow::anyhow!("Unknown tool: {name}")),
     }
 }

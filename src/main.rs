@@ -1,3 +1,26 @@
+#![allow(
+    // Casts: all in this crate are bounded by the caller's own inputs.
+    // `i as i64` for chunk index (n_chunks < i64::MAX always), `k as i64`
+    // for LIMIT (k comes from a usize argument), u128→u64 millis (post-1970
+    // process uptime), f64↔f32 for embedding precision (source is f32),
+    // usize→f64 for progress-bar math. `try_from` + `unwrap` would only
+    // add noise. `cast_lossless` (f32→f64) is still fixed by clippy.
+    clippy::cast_possible_truncation,
+    clippy::cast_possible_wrap,
+    clippy::cast_precision_loss,
+    clippy::cast_sign_loss,
+
+    // Structural: splitting these functions would hurt readability more
+    // than it helps. `list_tools` in particular is a flat data table.
+    clippy::too_many_lines,
+    clippy::type_complexity,
+
+    // Passing `Vec<f32>` by value so the callee owns it is deliberate —
+    // the caller builds it fresh and does not reuse it. Changing to
+    // `&[f32]` would force `.to_owned()` at every callsite.
+    clippy::needless_pass_by_value,
+)]
+
 mod cache;
 mod chunker;
 mod config;
@@ -19,12 +42,16 @@ use tracing_subscriber::{EnvFilter, fmt};
 
 use crate::config::Config;
 use crate::db::Db;
-use crate::tools::*;
+use crate::tools::{
+    CreateCollectionArgs, DeleteCollectionArgs, DeleteDocumentsArgs, IngestDirectoryArgs,
+    IngestFileArgs, QueryArgs, call_tool, create_collection, delete_collection, delete_documents,
+    ingest_directory, ingest_file, list_collections, list_tools, query,
+};
 
 #[derive(Parser)]
 #[command(name = "rag-server")]
 #[command(about = "Sovereign Rust RAG Server with local embedding and reranking")]
-#[command(version = "2.4.1")]
+#[command(version)]
 struct Cli {
     #[command(subcommand)]
     command: Option<Commands>,
@@ -69,14 +96,14 @@ async fn main() -> anyhow::Result<()> {
     // source location — record it here so a panic in a tool has an
     // actionable file:line:col in stderr.
     std::panic::set_hook(Box::new(|info| {
-        let location = info
-            .location()
-            .map(|l| format!("{}:{}:{}", l.file(), l.line(), l.column()))
-            .unwrap_or_else(|| "<unknown>".to_string());
+        let location = info.location().map_or_else(
+            || "<unknown>".to_string(),
+            |l| format!("{}:{}:{}", l.file(), l.line(), l.column()),
+        );
         let payload = info
             .payload()
             .downcast_ref::<&str>()
-            .map(|s| s.to_string())
+            .map(std::string::ToString::to_string)
             .or_else(|| info.payload().downcast_ref::<String>().cloned())
             .unwrap_or_else(|| "<non-string panic payload>".to_string());
         eprintln!("[PANIC] {location}: {payload}");
@@ -137,11 +164,13 @@ async fn run_server() -> anyhow::Result<()> {
                         "capabilities": { "tools": {} },
                         "serverInfo": {
                             "name": "sovereign-rag-rust",
-                            "version": "2.4.1"
+                            // Was hardcoded "2.4.1" and had drifted from
+                            // Cargo.toml. Track the package version.
+                            "version": env!("CARGO_PKG_VERSION")
                         }
                     }
                 });
-                println!("{}", resp);
+                println!("{resp}");
             }
             "notifications/initialized" => {
                 info!("Client completed MCP initialization handshake");
@@ -152,7 +181,7 @@ async fn run_server() -> anyhow::Result<()> {
                     "id": &req["id"],
                     "result": { "tools": list_tools() }
                 });
-                println!("{}", resp);
+                println!("{resp}");
             }
             "tools/call" => {
                 let tool_name = req["params"]["name"].as_str().unwrap_or("").to_string();
@@ -206,14 +235,30 @@ async fn run_server() -> anyhow::Result<()> {
                         })
                     }
                 };
-                println!("{}", resp);
+                println!("{resp}");
             }
             other => {
                 debug!(method = other, "Ignoring unhandled method");
             }
         }
     }
+
     info!("stdin closed; shutting down cleanly");
+
+    // Emit final cache stats — exercises `stats()`, `len()`, `is_empty()`
+    // (which would otherwise be dead code) and helps operators see whether
+    // the TTL / capacity are calibrated for their workload.
+    let (hits, misses, evictions) = cache::QUERY_CACHE.stats();
+    info!(
+        hits,
+        misses,
+        evictions,
+        len = cache::QUERY_CACHE.len(),
+        is_empty = cache::QUERY_CACHE.is_empty(),
+        "query cache stats at shutdown"
+    );
+    cache::QUERY_CACHE.clear();
+
     Ok(())
 }
 
@@ -229,31 +274,31 @@ async fn run_cli(command: Commands) -> anyhow::Result<()> {
     match command {
         Commands::CreateCollection(args) => {
             let result = create_collection::create_collection(&db, args).await?;
-            println!("{}", result);
+            println!("{result}");
         }
         Commands::IngestFile(args) => {
             let result = ingest_file::ingest_file(&db, &cfg, &client, args).await?;
-            println!("{}", result);
+            println!("{result}");
         }
         Commands::IngestDirectory(args) => {
             let result = ingest_directory::ingest_directory(&db, &cfg, &client, args).await?;
-            println!("{}", result);
+            println!("{result}");
         }
         Commands::Query(args) => {
             let result = query::query(&db, &cfg, &client, args).await?;
-            println!("{}", result);
+            println!("{result}");
         }
         Commands::ListCollections => {
             let result = list_collections::list_collections(&db).await?;
-            println!("{}", result);
+            println!("{result}");
         }
         Commands::DeleteDocuments(args) => {
             let result = delete_documents::delete_documents(&db, args).await?;
-            println!("{}", result);
+            println!("{result}");
         }
         Commands::DeleteCollection(args) => {
             let result = delete_collection::delete_collection(&db, args).await?;
-            println!("{}", result);
+            println!("{result}");
         }
         Commands::ClearCache => {
             cache::QUERY_CACHE.clear();

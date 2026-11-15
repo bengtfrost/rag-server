@@ -1,6 +1,8 @@
 # ========== RUST / CARGO ==========
-/target/
+target/
 **/*.rs.bk
+*.rlib
+*.rmeta
 *.pdb
 *.exp
 *.lib
@@ -12,25 +14,26 @@
 *.obj
 *.exe
 
-# Cargo.lock – commit it for binaries, ignore for libraries
-# /Cargo.lock
+# Cargo.lock: commit it — this crate is a binary (`[[bin]]`), not a library.
+# It is intentionally NOT ignored.
+!Cargo.lock
+
+# sccache / build cache
+.sccache/
+.cache/
 
 # ========== DEPENDENCIES ==========
-# If you use `cargo vendor` or similar
 /vendor/
 .cargo-ok
 
 # ========== EDITORS & IDES ==========
-# VSCode
 .vscode/
 *.code-workspace
 *.code-workspace.bak
 
-# Zed Editor
 .zed/
 .zed-settings.json
 
-# IntelliJ / CLion
 .idea/
 *.iml
 *.iws
@@ -41,12 +44,11 @@ out/
 # Vim
 *.swp
 *.swo
-*~
 *.un~
 *.orig
+*~
 
 # Emacs
-*~
 \#*\#
 /.emacs.desktop
 /.emacs.desktop.lock
@@ -56,7 +58,6 @@ out/
 *.sublime-project
 
 # ========== OS GENERATED FILES ==========
-# macOS
 .DS_Store
 .AppleDouble
 .LSOverride
@@ -64,17 +65,12 @@ out/
 .Spotlight-V100
 .Trashes
 
-# Windows
 Thumbs.db
 desktop.ini
 ehthumbs.db
 *.tmp
 
-# Linux
-*~
 .directory
-*.swp
-*.swo
 
 # ========== LOGS & DATABASES ==========
 *.log
@@ -83,6 +79,7 @@ ehthumbs.db
 *.db
 *.db-wal
 *.db-shm
+*.db-journal
 *.vdb
 *.vdb-wal
 *.vdb-shm
@@ -91,6 +88,13 @@ ehthumbs.db
 .env
 .env.*
 !.env.example
+# Legacy: a bare file named `env` (no dot) is still a secret, ignore it as a
+# file. Trailing-slash form only matches directories — it did not catch the
+# `env` file in this repo. `env/` below still covers the Python venv dir.
+env
+!env.example
+.direnv/
+.direnvrc
 *.pem
 *.key
 *.crt
@@ -100,6 +104,9 @@ ehthumbs.db
 *.secrets
 config.toml
 !config.toml.example
+# MCP client configuration — can contain API tokens / bearer creds.
+.mcp.json
+.mcp.local.json
 
 # ========== DOCUMENTATION ==========
 target/doc/
@@ -108,17 +115,21 @@ docs/
 *.pdf
 *.epub
 
-# ========== TESTS & COVERAGE ==========
+# ========== TESTS, COVERAGE & PROFILING ==========
 *.prof
+*.profraw
+*.profdata
 *.gcno
 *.gcda
 *.gcov
+perf.data
+perf.data.*
 coverage/
 lcov.info
 *.lcov
+.dhat/
 
-# ========== MISC ==========
-# Python cache (if you have mixed projects)
+# ========== PYTHON (for mixed projects / tooling) ==========
 __pycache__/
 *.py[cod]
 *$py.class
@@ -131,7 +142,7 @@ venv/
 ENV/
 env/
 
-# Debugging artifacts
+# ========== DEBUGGING ARTIFACTS ==========
 gdb_history.txt
 valgrind.out
 
@@ -142,17 +153,26 @@ valgrind.out
 *.bak
 *.backup
 *.old
-*.orig
 *.rej
 *.patch
 *.diff
 
 # ========== AI / MACHINE LEARNING ==========
-# BGE-M3 Tokenizer metadata
-tokenizer.json
+# IMPORTANT: tokenizer.json is currently tracked and is required at build
+# time (`include_bytes!` / `resources/tokenizer.json`). If you decide to
+# build it from Hugging Face at image-build time instead, uncomment the
+# line below AND run `git rm --cached tokenizer.json resources/tokenizer.json`.
+# tokenizer.json
+# resources/tokenizer.json
 
-# Large model files (if you ever move them into the repo)
+# Large model weights — never in-repo.
 *.gguf
-*.bin
 *.onnx
+
+# Platform-specific SQLite extension. Currently NOT tracked. Rebuilt in
+# Containerfile from `sqlite-vss` / `sqlite-vec`. To track the prebuilt
+# Linux x86_64 object instead, uncomment:
+# !resources/extensions/vec0.so
+
+# ========== RELEASE NOTES ==========
 .release-notes/

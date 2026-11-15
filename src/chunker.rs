@@ -11,10 +11,10 @@ static TOKENIZER: OnceLock<Result<Tokenizer, String>> = OnceLock::new();
 fn load_tokenizer(path: &str) -> anyhow::Result<&'static Tokenizer> {
     TOKENIZER
         .get_or_init(|| {
-            Tokenizer::from_file(path).map_err(|e| format!("Tokenizer error at {}: {}", path, e))
+            Tokenizer::from_file(path).map_err(|e| format!("Tokenizer error at {path}: {e}"))
         })
         .as_ref()
-        .map_err(|e| anyhow::anyhow!("{}", e))
+        .map_err(|e| anyhow::anyhow!("{e}"))
 }
 
 pub struct BgeChunker {
@@ -28,6 +28,9 @@ impl BgeChunker {
         })
     }
 
+    // Kept as a method (rather than an associated fn) for API symmetry with
+    // `chunk_text`, and because external callers use `chunker.split_sentences(..)`.
+    #[allow(clippy::unused_self)]
     pub fn split_sentences(&self, text: &str) -> Vec<String> {
         let text_clean = text.replace('\n', " ");
         let mut sentences = Vec::new();
@@ -52,8 +55,7 @@ impl BgeChunker {
     pub fn count_tokens(&self, text: &str) -> usize {
         self.tokenizer
             .encode(text, false)
-            .map(|e| e.get_ids().len())
-            .unwrap_or(0)
+            .map_or(0, |e| e.get_ids().len())
     }
 
     pub fn chunk_text(&self, text: &str, max_tokens: usize, overlap_tokens: usize) -> Vec<String> {
@@ -73,6 +75,9 @@ impl BgeChunker {
         self.chunk_text_with_counts(&sentences, &token_counts, max_tokens, overlap_tokens)
     }
 
+    // Kept as a method for API symmetry; the state is threaded via the
+    // explicit `sentences` / `token_counts` arguments, not `self`.
+    #[allow(clippy::unused_self)]
     fn chunk_text_with_counts(
         &self,
         sentences: &[String],

@@ -42,20 +42,22 @@ pub async fn ingest_directory(
 ) -> anyhow::Result<String> {
     let dir_path = &args.directory_path;
     if !std::path::Path::new(dir_path).is_dir() {
-        return Err(anyhow::anyhow!("Directory not found: {}", dir_path));
+        return Err(anyhow::anyhow!("Directory not found: {dir_path}"));
     }
 
-    let exts: Vec<String> = args
-        .file_extensions
-        .clone()
-        .unwrap_or_else(|| DEFAULT_EXTENSIONS.iter().map(|s| s.to_string()).collect());
+    let exts: Vec<String> = args.file_extensions.clone().unwrap_or_else(|| {
+        DEFAULT_EXTENSIONS
+            .iter()
+            .map(std::string::ToString::to_string)
+            .collect()
+    });
     let exts_set: std::collections::HashSet<String> = exts
         .iter()
         .map(|e| {
             if e.starts_with('.') {
                 e.clone()
             } else {
-                format!(".{}", e)
+                format!(".{e}")
             }
         })
         .collect();
@@ -65,20 +67,19 @@ pub async fn ingest_directory(
     for entry in entries {
         let entry = entry?;
         let path = entry.path();
-        if path.is_file() {
-            if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
-                let ext_with_dot = format!(".{}", ext.to_lowercase());
-                if exts_set.contains(&ext_with_dot) {
-                    files.push(path.to_string_lossy().to_string());
-                }
+        if path.is_file()
+            && let Some(ext) = path.extension().and_then(|e| e.to_str())
+        {
+            let ext_with_dot = format!(".{}", ext.to_lowercase());
+            if exts_set.contains(&ext_with_dot) {
+                files.push(path.to_string_lossy().to_string());
             }
         }
     }
     if files.is_empty() {
         let exts_str = exts_set.iter().cloned().collect::<Vec<_>>().join(", ");
         return Ok(format!(
-            "No files with extensions [{}] found in {}.",
-            exts_str, dir_path
+            "No files with extensions [{exts_str}] found in {dir_path}."
         ));
     }
 
@@ -153,7 +154,7 @@ pub async fn ingest_directory(
         tasks.push(tokio::spawn(async move {
             let _permit = permit;
             if let Some(e) = err {
-                return Ok((display_name, 0, format!("error – {}", e)));
+                return Ok((display_name, 0, format!("error – {e}")));
             }
             if chunks.is_empty() {
                 return Ok((display_name, 0, "empty file".to_string()));
@@ -194,13 +195,13 @@ pub async fn ingest_directory(
                 } else {
                     "✗"
                 };
-                result_lines.push(format!("  {} {}: {}", prefix, filename, msg));
+                result_lines.push(format!("  {prefix} {filename}: {msg}"));
             }
             Ok(Err(e)) => {
-                result_lines.push(format!("  ✗ file: {}", e));
+                result_lines.push(format!("  ✗ file: {e}"));
             }
             Err(e) => {
-                result_lines.push(format!("  ✗ task panic: {}", e));
+                result_lines.push(format!("  ✗ task panic: {e}"));
             }
         }
     }

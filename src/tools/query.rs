@@ -55,7 +55,8 @@ pub async fn query(
     );
 
     let t0 = Instant::now();
-    let query_emb = get_embeddings(client, cfg, &[optimized_query.clone()], "query").await?;
+    let query_emb =
+        get_embeddings(client, cfg, std::slice::from_ref(&optimized_query), "query").await?;
     let query_emb = query_emb
         .first()
         .ok_or_else(|| anyhow::anyhow!("No embedding returned"))?;
@@ -74,17 +75,15 @@ pub async fn query(
         cfg.embed_model
     );
 
-    let chunk_ids: Vec<String> = if !args.no_cache {
-        if let Some(cached) = QUERY_CACHE.get(&cache_key) {
-            debug!("Cache hit for query");
-            cached.as_ref().clone()
-        } else {
-            let results = run_search(db, cfg, &args, query_emb, &optimized_query).await?;
-            QUERY_CACHE.insert(cache_key, results.clone());
-            results
-        }
-    } else {
+    let chunk_ids: Vec<String> = if args.no_cache {
         run_search(db, cfg, &args, query_emb, &optimized_query).await?
+    } else if let Some(cached) = QUERY_CACHE.get(&cache_key) {
+        debug!("Cache hit for query");
+        cached.as_ref().clone()
+    } else {
+        let results = run_search(db, cfg, &args, query_emb, &optimized_query).await?;
+        QUERY_CACHE.insert(cache_key, results.clone());
+        results
     };
 
     if chunk_ids.is_empty() {
@@ -142,7 +141,9 @@ async fn run_search(
     db: &Arc<Mutex<Db>>,
     cfg: &Config,
     args: &QueryArgs,
-    query_emb: &Vec<f32>,
+    // Was `&Vec<f32>`. `&[f32]` is the honest type — no extra indirection,
+    // and `&Vec<f32>` at the call site deref-coerces automatically.
+    query_emb: &[f32],
     optimized_query: &str,
 ) -> anyhow::Result<Vec<String>> {
     let db_guard = db.lock().await;
@@ -155,7 +156,7 @@ async fn run_search(
         db_guard
             .hybrid_search(
                 &args.collection,
-                query_emb.clone(),
+                query_emb.to_vec(),
                 optimized_query,
                 cfg.rerank_candidates * 2,
                 args.vector_weight,
@@ -166,7 +167,7 @@ async fn run_search(
             .collect()
     } else {
         db_guard
-            .search(&args.collection, query_emb.clone(), cfg.rerank_candidates)?
+            .search(&args.collection, query_emb.to_vec(), cfg.rerank_candidates)?
             .into_iter()
             .map(|(id, _, _)| id)
             .collect()
@@ -178,7 +179,7 @@ async fn run_search(
 fn format_duration(d: std::time::Duration) -> String {
     let secs = d.as_secs();
     if secs < 60 {
-        format!("{}s", secs)
+        format!("{secs}s")
     } else {
         format!("{}m {}s", secs / 60, secs % 60)
     }

@@ -23,7 +23,7 @@ pub async fn get_embeddings(
 
     let batches: Vec<Vec<String>> = texts
         .chunks(batch_size)
-        .map(|chunk| chunk.to_vec())
+        .map(<[std::string::String]>::to_vec)
         .collect();
 
     let total_batches = batches.len();

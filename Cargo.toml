@@ -1,6 +1,6 @@
 [package]
 name = "rag-server-mcp"
-version = "2.4.1"
+version = "2.4.2"
 edition = "2024"
 rust-version = "1.100"
 description = "Sovereign, high-performance RAG MCP server written in Rust for local code and legal search."
@@ -11,7 +11,18 @@ repository = "https://github.com/bengtfrost/rag-server"
 targets = []
 
 [dependencies]
-tokio = { version = "1", features = ["full"] }
+# Trimmed from "full": process / io-std / parking_lot / test-util are unused.
+# Add back individually if you later need them.
+tokio = { version = "1", features = [
+  "rt-multi-thread",
+  "macros",
+  "net",
+  "fs",
+  "io-util",
+  "time",
+  "signal",
+  "sync",
+] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 rusqlite = { version = "0.40", features = ["bundled", "load_extension"] }
@@ -31,6 +42,12 @@ clap = { version = "4", features = ["derive"] }
 # Optimizations
 rayon = "1.10"
 dashmap = "6.2"
+
+# Build third-party deps at -O2 even in dev builds. Tokenizers, pdf-extract and
+# the TLS stack are excruciatingly slow at opt-level = 0; the local crate stays
+# incremental for fast iteration.
+[profile.dev.package."*"]
+opt-level = 2
 
 [profile.release]
 lto = "thin"

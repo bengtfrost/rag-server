@@ -1,6 +1,7 @@
 use crate::db::Db;
 use clap::Args;
 use serde::Deserialize;
+use std::fmt::Write as _;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
@@ -54,10 +55,11 @@ pub async fn delete_documents(
         args.collection
     );
     if !missing.is_empty() {
-        msg.push_str(&format!(
+        let _ = write!(
+            msg,
             "\nWarning: Not found and skipped: {}",
             missing.join(", ")
-        ));
+        );
     }
     Ok(msg)
 }
