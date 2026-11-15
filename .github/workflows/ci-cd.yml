@@ -7,28 +7,142 @@ on:
     branches: [master]
   workflow_dispatch:
 
-permissions:
-  contents: read
-  packages: write
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 env:
   REGISTRY: ghcr.io
   IMAGE_NAME: ${{ github.repository }}
 
 jobs:
-  build-and-push:
+  # ---------------------------------------------------------------------------
+  # Preflight — fail in ~30 s if a base image, download URL, or package name
+  # isn't available. Runs before the 15–20 min multi-arch build so a typo in
+  # a version pin doesn't cost 20 minutes of CI time to discover.
+  # ---------------------------------------------------------------------------
+  preflight:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
-      - name: Checkout
-        uses: actions/checkout@v7
+      - name: Verify builder base image exists
+        run: |
+          docker pull rust:1.100.0-slim-trixie >/dev/null
+          echo "✓ rust:1.100.0-slim-trixie available"
 
-      - name: Get version from Cargo.toml
+      - name: Verify runtime base image exists
+        run: |
+          docker pull debian:trixie-slim >/dev/null
+          echo "✓ debian:trixie-slim available"
+
+      - name: Verify vec0.so download URLs (both arches)
+        run: |
+          for arch in x86_64 aarch64; do
+            url="https://github.com/asg017/sqlite-vec/releases/download/v0.1.9/sqlite-vec-0.1.9-loadable-linux-${arch}.tar.gz"
+            if ! curl -fsSL --max-time 60 -o /dev/null "$url"; then
+              echo "::error::Download failed: $url"
+              exit 1
+            fi
+            echo "✓ ${arch} tarball reachable"
+          done
+
+      - name: Verify libssl3t64 exists in trixie
+        run: |
+          docker run --rm debian:trixie-slim sh -c '
+            apt-get update >/dev/null 2>&1
+            apt-cache show libssl3t64 >/dev/null 2>&1 || {
+              echo "::error::libssl3t64 not found in trixie"
+              exit 1
+            }
+            echo "✓ libssl3t64 available in trixie"
+          '
+
+  # ---------------------------------------------------------------------------
+  # Lint gate — fails before the expensive build if fmt or clippy is dirty.
+  # ---------------------------------------------------------------------------
+  lint:
+    needs: preflight
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+
+      # NOTE: dtolnay/rust-toolchain@stable IGNORES the `toolchain:` input —
+      # the ref name is the toolchain. To pin an exact version, use @master
+      # with an explicit `toolchain:`.
+      - name: Install Rust 1.100.0
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: "1.100.0"
+          components: rustfmt, clippy
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: cargo fmt --check
+        run: cargo fmt --all --check
+
+      - name: cargo clippy
+        run: |
+          cargo clippy --all-targets --locked -- \
+            -W clippy::pedantic -A clippy::module_name_repetitions -D warnings
+
+  # ---------------------------------------------------------------------------
+  # Build (PRs) or build+push (master / dispatch).
+  # ---------------------------------------------------------------------------
+  build:
+    needs: lint
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      version: ${{ steps.get_version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v7
+
+      # Read `version` from the [package] table only — the previous sed
+      # grabbed the first `version = "…"` anywhere, which is fine today but
+      # breaks the day a dependency moves above [package].
+      - name: Read version from Cargo.toml
         id: get_version
         run: |
-          version="$(sed -n 's/^version *= *"\(.*\)"/\1/p' Cargo.toml)"
+          version="$(awk -F'"' '
+            /^\[package\]/ { in_pkg = 1; next }
+            /^\[/          { in_pkg = 0 }
+            in_pkg && /^version/ { print $2; exit }
+          ' Cargo.toml)"
+          if [ -z "$version" ]; then
+            echo "::error::Could not read version from Cargo.toml"
+            exit 1
+          fi
           echo "version=$version" >> "$GITHUB_OUTPUT"
-          # optional: print for logs
-          echo "Found version: $version"
+          echo "Resolved version: $version"
+
+      # PRs get a throwaway build with no push and a single sha tag.
+      # Master builds get sha + vX.Y.Z + latest.
+      #
+      # Fixes the previous workflow's two bugs:
+      #   (a) env.VERSION was undefined (version lives at
+      #       steps.get_version.outputs.version), so the third tag rendered
+      #       as literally `:v` — every push overwrote it, no vX.Y.Z ever
+      #       existed on GHCR.
+      #   (b) push ran unconditionally on PRs.
+      - name: Compute image tags
+        id: tags
+        env:
+          VERSION: ${{ steps.get_version.outputs.version }}
+          IS_PR: ${{ github.event_name == 'pull_request' }}
+        run: |
+          base="${REGISTRY}/${IMAGE_NAME}"
+          list="${base}:sha-${{ github.sha }}"
+          if [ "$IS_PR" != "true" ]; then
+            list="${list},${base}:v${VERSION}"
+            list="${list},${base}:latest"
+          fi
+          echo "list=$list" >> "$GITHUB_OUTPUT"
+          echo "Tags: $list"
 
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v4
@@ -36,7 +150,8 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v4
 
-      - name: Log in to GitHub Container Registry
+      - name: Log in to GHCR
+        if: github.event_name != 'pull_request'
         uses: docker/login-action@v4
         with:
           registry: ${{ env.REGISTRY }}
@@ -48,19 +163,46 @@ jobs:
         with:
           context: .
           file: Containerfile
-          push: true
-          platforms: linux/amd64,linux/arm64   # ← multi-arch
-          tags: |
-            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
-            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.sha }}
-            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:v${{ env.VERSION }}
+          platforms: linux/amd64,linux/arm64
+          push: ${{ github.event_name != 'pull_request' }}
+          tags: ${{ steps.tags.outputs.list }}
+          # Supply-chain metadata: SLSA provenance + SPDX SBOM. Comment out
+          # on first run if the runner doesn't support attestations, restore
+          # after the pipeline is green.
+          provenance: true
+          sbom: true
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
+  # ---------------------------------------------------------------------------
+  # Smoke test — runs only on master/dispatch, against the image that was
+  # actually pushed. The `list-collections` step is the one that would have
+  # caught the v2.4.2 resources bug: `--help` exits before Config::from_env()
+  # runs, so a --help-only test passes even when the image has no tokenizer
+  # or vec0.so.
+  # ---------------------------------------------------------------------------
   smoke-test:
-    needs: build-and-push
+    needs: [build, lint]
+    if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: read
+    env:
+      IMAGE: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
     steps:
+      - uses: actions/checkout@v7
+
+      - name: Read version from Cargo.toml
+        id: get_version
+        run: |
+          version="$(awk -F'"' '
+            /^\[package\]/ { in_pkg = 1; next }
+            /^\[/          { in_pkg = 0 }
+            in_pkg && /^version/ { print $2; exit }
+          ' Cargo.toml)"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
       - name: Log in to GHCR
         uses: docker/login-action@v4
         with:
@@ -69,16 +211,50 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Pull image
-        run: docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
+        run: docker pull "${IMAGE}:latest"
 
-      - name: Test CLI – help
-        run: docker run --rm ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest --help
+      - name: CLI — help
+        run: docker run --rm "${IMAGE}:latest" --help
 
-      - name: Test CLI – query help
-        run: docker run --rm ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest query --help
+      - name: CLI — query help
+        run: docker run --rm "${IMAGE}:latest" query --help
 
-      - name: Test CLI – ingest-file help
-        run: docker run --rm ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest ingest-file --help
+      - name: CLI — ingest-file help
+        run: docker run --rm "${IMAGE}:latest" ingest-file --help
 
-      - name: Test CLI – list-collections help
-        run: docker run --rm ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest list-collections --help
+      - name: CLI — version matches Cargo.toml
+        run: |
+          out=$(docker run --rm "${IMAGE}:latest" --version)
+          echo "$out"
+          echo "$out" | grep -q "${{ steps.get_version.outputs.version }}" || {
+            echo "::error::--version output does not match Cargo.toml"
+            exit 1
+          }
+
+      # The real resources check: calls Config::from_env() and then Db::new(),
+      # so it fails if $RAG_RESOURCES_DIR/tokenizer.json or .../vec0.so are
+      # missing. Since v2.4.3 the server bails fast with a clear message.
+      #
+      # Exit code is captured explicitly because `docker run | tee` yields
+      # tee's exit code, not docker's — a silent failure would be masked.
+      - name: Runtime — resources resolve and vec0 loads
+        run: |
+          docker run --rm \
+            -e RUST_LOG=info \
+            -e RAG_DB_PATH=/tmp/smoke.db \
+            "${IMAGE}:latest" \
+            list-collections > /tmp/smoke.log 2>&1
+          code=$?
+          cat /tmp/smoke.log
+          if [ "$code" -ne 0 ]; then
+            echo "::error::list-collections exited $code — image is missing resources"
+            exit 1
+          fi
+          grep -q "resolved resource paths" /tmp/smoke.log || {
+            echo "::error::startup log missing 'resolved resource paths'"
+            exit 1
+          }
+          if grep -qi "vec0 extension not found" /tmp/smoke.log; then
+            echo "::error::vec0 extension not found in image"
+            exit 1
+          fi

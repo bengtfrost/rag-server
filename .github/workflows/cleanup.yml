@@ -2,19 +2,34 @@ name: Cleanup old container images
 
 on:
   schedule:
-    - cron: '0 3 * * 0'
+    - cron: "0 3 * * 0" # Sundays 03:00 UTC
   workflow_dispatch:
 
 permissions:
   contents: read
   packages: write
 
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: false
+
 jobs:
   cleanup:
     runs-on: ubuntu-latest
     steps:
+      # `dataaxiom/ghcr-cleanup-action` uses wildcard-match syntax for
+      # `exclude-tags` by default (?, *, **). Regex requires `use-regex: true`,
+      # and regex is rejected as ReDoS-prone in wildcard mode. Wildcards
+      # express the same rule: `latest` protects the rolling tag, `v*`
+      # protects every `vX.Y.Z` release tag. Only `sha-*` tags rotate.
+      #
+      # First run: uncomment `dry-run: true`, inspect the log, then remove it.
+      # Or trigger manually with:
+      #   gh workflow run cleanup.yml
       - name: Delete old GHCR images
         uses: dataaxiom/ghcr-cleanup-action@v1
         with:
+          # dry-run: true
           delete-untagged: true
-          keep-n-tagged: 5
+          keep-n-tagged: 10
+          exclude-tags: "latest,v*"

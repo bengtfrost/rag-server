@@ -1,0 +1,29 @@
+# Build artefacts and VCS
+target/
+.git/
+.github/
+
+# Secrets — never enter the build context
+env
+.env
+.env.*
+*.pem
+*.key
+*.crt
+
+# User data — never enter the image
+*.db
+*.db-wal
+*.db-shm
+*.db-journal
+
+# Downloaded into the image at build time (see Containerfile). The local
+# copy is x86_64; the Containerfile fetches the correct arch per TARGETARCH.
+resources/extensions/
+
+# Docs / editor / OS
+*.md
+!README.md
+.vscode/
+.idea/
+.DS_Store
