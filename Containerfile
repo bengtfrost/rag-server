@@ -3,8 +3,6 @@
 # =============================================================================
 # Stage 1: Builder — compile the Rust binary for the target architecture
 # =============================================================================
-# Pinned to the patch-level tag (1.100.0) rather than the major-minor (1.100),
-# matching a known-good pin from a 2026-11-13 GitLab Containerfile.
 # Fallbacks if this tag ever 404s:
 #   rust:1.100-slim-trixie
 #   rust:1.99-slim-trixie
@@ -76,9 +74,18 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         libssl3t64 \
     && rm -rf /var/lib/apt/lists/*
 
-# Unprivileged user. /home/raguser is writable, so the default DB path
-# ($XDG_CONFIG_HOME/rag-server/vectors.db) works.
-RUN adduser --disabled-password --gecos "" raguser
+# Non-root user via `useradd` (from `passwd`, Priority: required — always
+# present). `adduser` is NOT in debian:trixie-slim: Debian dropped it from the
+# slim base in the Bookworm→Trixie transition. Installing it just for this
+# line adds a package; `useradd` is what other trixie-slim fixes converged on.
+#
+# Flags mirror `adduser --disabled-password --gecos ""`:
+#   --create-home     → creates /home/raguser (needed for the default DB path)
+#   --shell ...nologin → no interactive login (equivalent to disabled password)
+#   --comment ""      → empty GECOS field
+#   no -p             → password field set to "!" in /etc/shadow (locked)
+RUN useradd --create-home --home-dir /home/raguser \
+        --shell /usr/sbin/nologin --comment "" raguser
 
 # Layout:
 #   /usr/local/bin/rag-server-mcp
